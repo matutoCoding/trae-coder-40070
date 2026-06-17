@@ -194,7 +194,7 @@ export const generateProductionData = (): ProductionRecord[] => {
 export const generateEnergyData = (): EnergyRecord[] => {
   const records: EnergyRecord[] = [];
   const today = new Date();
-  for (let daysAgo = 6; daysAgo >= 0; daysAgo--) {
+  for (let daysAgo = 13; daysAgo >= 0; daysAgo--) {
     const date = new Date(today);
     date.setDate(date.getDate() - daysAgo);
     const fullDate = getLocalDateStr(date);

@@ -139,3 +139,88 @@ export const getEnergyWithOutputAnalysis = (energy: EnergyRecord, prevEnergy?: E
     ],
   };
 };
+
+export const getEnergyForDate = (data: EnergyRecord[], fullDate: string): EnergyRecord | undefined => {
+  return data.find((e) => e.fullDate === fullDate);
+};
+
+export const getTodayEnergy = (data: EnergyRecord[]): EnergyRecord | undefined => {
+  return getEnergyForDate(data, getTodayLocalStr());
+};
+
+export const filterEnergyByRange = (data: EnergyRecord[], startDate: string, endDate: string): EnergyRecord[] => {
+  return data.filter((e) => e.fullDate >= startDate && e.fullDate <= endDate);
+};
+
+export type EfficiencyTag = 'excellent' | 'good' | 'normal' | 'poor';
+
+export const getEfficiencyTag = (energy: EnergyRecord, avgOutput: number, avgTotal: number): EfficiencyTag => {
+  if (energy.output >= avgOutput * 1.03 && energy.total <= avgTotal * 0.98) return 'excellent';
+  if (energy.output >= avgOutput && energy.total <= avgTotal) return 'good';
+  if (energy.output < avgOutput * 0.97 && energy.total > avgTotal * 1.02) return 'poor';
+  return 'normal';
+};
+
+export const getEfficiencyLabel = (tag: EfficiencyTag): string => {
+  switch (tag) {
+    case 'excellent': return '高产低耗';
+    case 'good': return '运行良好';
+    case 'poor': return '低产高耗';
+    case 'normal': return '运行正常';
+  }
+};
+
+export const getEfficiencyColor = (tag: EfficiencyTag): string => {
+  switch (tag) {
+    case 'excellent': return 'text-alarm-success';
+    case 'good': return 'text-primary-400';
+    case 'poor': return 'text-alarm-danger';
+    case 'normal': return 'text-dark-300';
+  }
+};
+
+export const getEfficiencyBg = (tag: EfficiencyTag): string => {
+  switch (tag) {
+    case 'excellent': return 'bg-alarm-success/15 border-alarm-success/30';
+    case 'good': return 'bg-primary-500/15 border-primary-500/30';
+    case 'poor': return 'bg-alarm-danger/15 border-alarm-danger/30';
+    case 'normal': return 'bg-dark-700 border-dark-600';
+  }
+};
+
+export const generateDailyEvaluation = (
+  energy: EnergyRecord | undefined,
+  output: number,
+  avgOutput: number,
+  avgEnergy: number,
+  hotSpotTemp: number,
+  alarmCount: number,
+): string => {
+  if (!energy) return '暂无数据';
+  const tag = getEfficiencyTag(energy, avgOutput, avgEnergy);
+  const parts: string[] = [];
+  if (tag === 'excellent') {
+    parts.push(`当日生产运行优秀，产量${energy.output.toFixed(0)}吨高于日均${avgOutput.toFixed(0)}吨，综合能耗${energy.total.toFixed(2)} GJ/t低于平均${avgEnergy.toFixed(2)} GJ/t，规模效益发挥充分。`);
+  } else if (tag === 'poor') {
+    parts.push(`当日生产运行欠佳，产量${energy.output.toFixed(0)}吨低于日均${avgOutput.toFixed(0)}吨，综合能耗${energy.total.toFixed(2)} GJ/t高于平均${avgEnergy.toFixed(2)} GJ/t，建议排查设备状况、优化工艺参数。`);
+  } else if (tag === 'good') {
+    parts.push(`当日生产运行良好，产量与能耗均优于平均水平，继续保持当前操作参数。`);
+  } else {
+    parts.push(`当日生产运行正常，产量${energy.output.toFixed(0)}吨，综合能耗${energy.total.toFixed(2)} GJ/t，各项指标基本稳定。`);
+  }
+  if (hotSpotTemp > 510) {
+    parts.push(`合成塔热点温度${hotSpotTemp.toFixed(0)}℃偏高，需密切关注床层温度变化，防止超温。`);
+  } else if (hotSpotTemp < 475) {
+    parts.push(`合成塔热点温度${hotSpotTemp.toFixed(0)}℃偏低，可能影响合成效率，建议适当调整入塔温度。`);
+  }
+  if (alarmCount > 0) {
+    parts.push(`当日共${alarmCount}条告警信息，请及时处理。`);
+  }
+  if (energy.coal > 1.2) {
+    parts.push(`吨氨耗煤${energy.coal.toFixed(3)} t/t偏高，建议优化气化炉操作条件。`);
+  }
+  if (energy.power > 1350) {
+    parts.push(`吨氨电耗${energy.power.toFixed(0)} kWh/t偏高，检查压缩机及冰机运行效率。`);
+  }
+  return parts.join('');
+};
