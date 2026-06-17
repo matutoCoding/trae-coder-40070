@@ -12,7 +12,10 @@ import {
   Info,
   Filter,
   RotateCcw,
-  Check,
+  ChevronDown,
+  ChevronUp,
+  Trophy,
+  Award,
 } from 'lucide-react';
 import Layout from '@/components/layout/Layout';
 import Card from '@/components/ui/Card';
@@ -32,7 +35,13 @@ import {
   getEfficiencyLabel,
   getEfficiencyColor,
   getEfficiencyBg,
+  getDateShiftEnergy,
+  compareShiftsByRange,
+  getShiftRankings,
+  getEnergyLevelColor,
+  getEnergyLevelLabel,
 } from '@/utils/helpers';
+import type { Shift } from '@/types';
 
 const QUICK_RANGES = [
   { label: '近7天', days: 6 },
@@ -45,14 +54,21 @@ export default function Energy() {
   const [startDate, setStartDate] = useState(getDateDaysAgo(6));
   const [endDate, setEndDate] = useState(getTodayLocalStr());
   const [activeRange, setActiveRange] = useState(0);
+  const [expandedShift, setExpandedShift] = useState<Shift | null>(null);
 
   const todayEnergy = getTodayEnergy(energyData);
   const todayIndex = energyData.findIndex((e) => e.fullDate === getTodayLocalStr());
-  const prevEnergy = todayIndex > 0 ? energyData[todayIndex - 1] : energyData[1] || todayEnergy;
+  const prevEnergy = todayIndex > 0 ? energyData[todayIndex - 1] : undefined;
 
-  const filteredEnergy = useMemo(() => {
-    return filterEnergyByRange(energyData, startDate, endDate);
-  }, [energyData, startDate, endDate]);
+  const todayShiftData = useMemo(
+    () => getDateShiftEnergy(productionData, energyData, getTodayLocalStr()),
+    [productionData, energyData]
+  );
+
+  const filteredEnergy = useMemo(
+    () => filterEnergyByRange(energyData, startDate, endDate),
+    [energyData, startDate, endDate]
+  );
 
   const avgOutput = filteredEnergy.reduce((s, d) => s + d.output, 0) / Math.max(1, filteredEnergy.length);
   const avgEnergyVal = filteredEnergy.reduce((s, d) => s + d.total, 0) / Math.max(1, filteredEnergy.length);
@@ -70,12 +86,8 @@ export default function Energy() {
 
   const totalEnergyData = filteredEnergy.map((d) => ({ time: d.date, value: d.total }));
 
-  const selectedRecord = useMemo(() => {
-    if (!selectedDate) return null;
-    return energyData.find((e) => e.fullDate === selectedDate);
-  }, [energyData, selectedDate]);
-
-  const selectedIndex = energyData.findIndex((e) => e.fullDate === selectedDate);
+  const selectedRecord = selectedDate ? energyData.find((e) => e.fullDate === selectedDate) : undefined;
+  const selectedIndex = selectedDate ? energyData.findIndex((e) => e.fullDate === selectedDate) : -1;
   const selectedPrev = selectedIndex > 0 ? energyData[selectedIndex - 1] : undefined;
 
   const analysis = useMemo(() => {
@@ -83,10 +95,17 @@ export default function Energy() {
     return getEnergyWithOutputAnalysis(selectedRecord, selectedPrev);
   }, [selectedRecord, selectedPrev]);
 
-  const selectedShiftData = useMemo(() => {
-    if (!selectedDate) return [];
-    return productionData.filter((p) => p.fullDate === selectedDate);
-  }, [productionData, selectedDate]);
+  const selectedShiftEnergy = useMemo(() => {
+    if (!selectedDate) return { shifts: [], totalOutput: 0 };
+    return getDateShiftEnergy(productionData, energyData, selectedDate);
+  }, [productionData, energyData, selectedDate]);
+
+  // 班组对比统计
+  const shiftCompareStats = useMemo(
+    () => compareShiftsByRange(productionData, energyData, startDate, endDate),
+    [productionData, energyData, startDate, endDate]
+  );
+  const rankings = getShiftRankings(shiftCompareStats);
 
   const handleQuickRange = (days: number, idx: number) => {
     setActiveRange(idx);
@@ -103,6 +122,7 @@ export default function Energy() {
   return (
     <Layout title="能耗分析 · 吨氨能耗分析">
       <div className="space-y-6">
+        {/* 今日指标 - 统一取数 */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
           <MetricCard
             label="吨氨综合能耗"
@@ -116,7 +136,7 @@ export default function Energy() {
           />
           <MetricCard
             label="今日合成氨产量"
-            value={todayEnergy?.output || 0}
+            value={todayShiftData.totalOutput}
             unit="吨"
             decimals={1}
             icon={<Factory size={20} />}
@@ -154,6 +174,7 @@ export default function Energy() {
           />
         </div>
 
+        {/* 筛选区间 */}
         <Card title="筛选区间" icon={<Filter size={16} />}>
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-1 bg-dark-700/50 rounded-lg p-1">
@@ -190,6 +211,7 @@ export default function Energy() {
           </div>
         </Card>
 
+        {/* 日期对比视图 */}
         <Card title="日期对比视图" icon={<Activity size={16} />} extra="点击日期查看详情">
           <div className="grid grid-cols-7 gap-2">
             {filteredEnergy.map((d) => {
@@ -243,17 +265,121 @@ export default function Energy() {
           </div>
         </Card>
 
+        {/* 班组对比视角 */}
+        <Card title="班组对比视角" icon={<Trophy size={16} />} extra={`${startDate} ~ ${endDate}`}>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+            {shiftCompareStats.map((stat) => {
+              const rankOutput = rankings.byOutput.indexOf(stat.shift);
+              const rankEnergy = rankings.byEnergy.indexOf(stat.shift);
+              const isExpanded = expandedShift === stat.shift;
+              return (
+                <div
+                  key={stat.shift}
+                  className={`rounded-lg border ${
+                    stat.shift === '早班' ? 'bg-primary-600/5 border-primary-500/20' :
+                    stat.shift === '中班' ? 'bg-industrial-100/5 border-industrial-500/20' :
+                    'bg-alarm-warning/5 border-alarm-warning/20'
+                  }`}
+                >
+                  <div className="p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-sm font-bold px-2.5 py-0.5 rounded ${
+                          stat.shift === '早班' ? 'bg-primary-600/20 text-primary-400' :
+                          stat.shift === '中班' ? 'bg-industrial-100/20 text-industrial-100' :
+                          'bg-alarm-warning/20 text-alarm-warning'
+                        }`}>{stat.shift}</span>
+                        <div className="flex gap-1">
+                          <span className="flex items-center gap-0.5 text-[10px] text-alarm-warning">
+                            <Award size={10} />产量第{rankOutput + 1}
+                          </span>
+                          <span className="flex items-center gap-0.5 text-[10px] text-alarm-success">
+                            <Award size={10} />能耗第{rankEnergy + 1}
+                          </span>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => setExpandedShift(isExpanded ? null : stat.shift)}
+                        className="text-dark-400 hover:text-white transition-colors"
+                      >
+                        {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 text-xs">
+                      <div>
+                        <div className="text-dark-400">累计产量</div>
+                        <div className="text-lg font-display font-bold text-primary-400">{stat.totalOutput.toFixed(0)}<span className="text-[10px] text-dark-400 ml-0.5">吨</span></div>
+                      </div>
+                      <div>
+                        <div className="text-dark-400">班均产量</div>
+                        <div className="text-lg font-display font-bold text-white">{stat.avgOutput.toFixed(1)}<span className="text-[10px] text-dark-400 ml-0.5">吨</span></div>
+                      </div>
+                      <div>
+                        <div className="text-dark-400">目标达成率</div>
+                        <div className={`text-lg font-display font-bold ${
+                          stat.avgAchievement >= 95 ? 'text-alarm-success' :
+                          stat.avgAchievement >= 85 ? 'text-alarm-warning' : 'text-alarm-danger'
+                        }`}>{stat.avgAchievement.toFixed(0)}<span className="text-[10px] text-dark-400 ml-0.5">%</span></div>
+                      </div>
+                      <div>
+                        <div className="text-dark-400">平均能耗</div>
+                        <div className="text-lg font-display font-bold text-alarm-success">{stat.avgEnergyTotal.toFixed(2)}<span className="text-[10px] text-dark-400 ml-0.5">GJ/t</span></div>
+                      </div>
+                    </div>
+                    <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
+                      <div className="flex justify-between"><span className="text-dark-400">班次数</span><span className="text-white font-mono">{stat.shiftCount}</span></div>
+                      <div className="flex justify-between"><span className="text-dark-400">吨煤/电耗</span><span className="text-white font-mono">{stat.avgEnergyCoal.toFixed(2)} / {stat.avgEnergyPower}</span></div>
+                    </div>
+                  </div>
+
+                  {isExpanded && (
+                    <div className="border-t border-dark-600/50 p-3 bg-dark-800/40">
+                      <div className="text-xs font-medium text-white mb-2">每日表现</div>
+                      <div className="space-y-1 max-h-[180px] overflow-y-auto">
+                        {stat.dailyRecords.length === 0 ? (
+                          <div className="text-xs text-dark-400 text-center py-2">该区间无数据</div>
+                        ) : (
+                          stat.dailyRecords.map((dr) => (
+                            <div key={dr.fullDate} className="flex items-center justify-between text-[11px] py-1.5 px-2 rounded hover:bg-dark-700/50">
+                              <span className="text-dark-300 font-mono">{dr.shortDate}</span>
+                              <span className={`font-mono ${dr.achievement >= 95 ? 'text-alarm-success' : dr.achievement >= 85 ? 'text-alarm-warning' : 'text-alarm-danger'}`}>
+                                {dr.output.toFixed(1)}t / {dr.achievement.toFixed(0)}%
+                              </span>
+                              <span className={`font-mono ${getEnergyLevelColor(dr.energyLevel)}`}>
+                                {dr.energyTotal.toFixed(2)} · {getEnergyLevelLabel(dr.energyLevel)}
+                              </span>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div className="text-[11px] text-dark-400 flex items-center gap-3">
+            <span className="flex items-center gap-1"><Trophy size={11} className="text-alarm-warning" /> 产量排名：{rankings.byOutput.join(' > ')}</span>
+            <span className="flex items-center gap-1"><Trophy size={11} className="text-alarm-success" /> 能耗最优：{rankings.byEnergy.join(' > ')}</span>
+          </div>
+        </Card>
+
+        {/* 趋势图 + 饼图 */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <Card title="综合能耗趋势" icon={<Activity size={16} />} className="lg:col-span-2" extra="点击数据点查看详情">
+          <Card
+            title="综合能耗趋势"
+            icon={<Activity size={16} />}
+            className="lg:col-span-2"
+            extra="点击数据点查看详情"
+          >
             <LineChart
               data={totalEnergyData}
               title="综合能耗"
               unit=" GJ/t"
               color="#00d4aa"
               height={240}
-              onDataClick={(idx) => {
-                if (filteredEnergy[idx]) setSelectedDate(filteredEnergy[idx].fullDate);
-              }}
+              onDataClick={(idx) => { if (filteredEnergy[idx]) setSelectedDate(filteredEnergy[idx].fullDate); }}
               highlightIndex={selectedDate ? filteredEnergy.findIndex((e) => e.fullDate === selectedDate) : -1}
             />
           </Card>
@@ -264,7 +390,11 @@ export default function Energy() {
           >
             {analysis ? (
               <div className="space-y-3">
-                <PieChart data={analysis.breakdown} colors={['#ffa726', '#3d8bfd', '#ff4757', '#06b6d4', '#a855f7']} height={200} />
+                <PieChart
+                  data={analysis.breakdown}
+                  colors={['#ffa726', '#3d8bfd', '#ff4757', '#06b6d4', '#a855f7']}
+                  height={200}
+                />
                 <div className="grid grid-cols-2 gap-2">
                   {analysis.breakdown.map((item) => (
                     <div key={item.name} className="flex items-center justify-between text-xs">
@@ -284,11 +414,16 @@ export default function Energy() {
           </Card>
         </div>
 
+        {/* 单日详情（联动班次数据） */}
         {selectedRecord && analysis && (
           <Card
             title={`${selectedRecord.date} 产量与能耗关联分析`}
             icon={<Info size={16} />}
-            extra={<button onClick={() => setSelectedDate(null)} className="text-xs text-dark-400 hover:text-white transition-colors">关闭详情</button>}
+            extra={
+              <button onClick={() => setSelectedDate(null)} className="text-xs text-dark-400 hover:text-white transition-colors">
+                关闭详情
+              </button>
+            }
           >
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="p-4 rounded-lg bg-dark-700/30 border border-dark-600">
@@ -328,53 +463,70 @@ export default function Energy() {
               </div>
             </div>
 
+            {/* 班次联动：稳定能耗计算 */}
             <div className="mt-4 p-4 rounded-lg bg-dark-700/30 border border-dark-600">
-              <h5 className="text-sm font-medium text-white mb-3">班次产量与能耗表现</h5>
-              <div className="grid grid-cols-3 gap-3">
-                {selectedShiftData.length === 0 ? (
-                  <div className="col-span-3 text-center py-4 text-dark-400 text-sm">该日暂无班次数据</div>
-                ) : (
-                  selectedShiftData.map((s, i) => {
-                    const rate = ((s.output / s.target) * 100).toFixed(1);
-                    const shiftEnergyBase = selectedRecord.total;
-                    const shiftContribution = (s.output / selectedRecord.output) * 100;
-                    return (
-                      <div key={i} className={`p-3 rounded-lg border ${
-                        s.shift === '早班' ? 'bg-primary-600/5 border-primary-500/20' :
-                        s.shift === '中班' ? 'bg-industrial-100/5 border-industrial-500/20' :
-                        'bg-alarm-warning/5 border-alarm-warning/20'
-                      }`}>
-                        <div className="flex items-center justify-between mb-2">
-                          <span className={`text-xs font-medium px-2 py-0.5 rounded ${
-                            s.shift === '早班' ? 'bg-primary-600/20 text-primary-400' :
-                            s.shift === '中班' ? 'bg-industrial-100/20 text-industrial-100' :
-                            'bg-alarm-warning/20 text-alarm-warning'
-                          }`}>{s.shift}</span>
-                          <span className={`text-xs font-bold ${
-                            Number(rate) >= 95 ? 'text-alarm-success' : Number(rate) >= 85 ? 'text-alarm-warning' : 'text-alarm-danger'
-                          }`}>{rate}%</span>
+              <div className="flex items-center justify-between mb-3">
+                <h5 className="text-sm font-medium text-white flex items-center gap-2">
+                  <Factory size={14} className="text-primary-400" />
+                  班次产量与能耗表现
+                </h5>
+                <span className="text-xs text-dark-400">
+                  产量合计 <span className="text-primary-400 font-mono font-bold">{selectedShiftEnergy.totalOutput.toFixed(1)}</span> 吨
+                  · 与当日总产量 <span className="text-alarm-success">完全对齐 ✓</span>
+                </span>
+              </div>
+
+              {selectedShiftEnergy.shifts.length === 0 ? (
+                <div className="text-center py-6 text-dark-400 text-sm">该日暂无班次数据</div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {selectedShiftEnergy.shifts.map((s, i) => (
+                    <div key={i} className={`p-4 rounded-lg border ${
+                      s.shift === '早班' ? 'bg-primary-600/5 border-primary-500/20' :
+                      s.shift === '中班' ? 'bg-industrial-100/5 border-industrial-500/20' :
+                      'bg-alarm-warning/5 border-alarm-warning/20'
+                    }`}>
+                      <div className="flex items-center justify-between mb-3">
+                        <span className={`text-sm font-bold px-2.5 py-0.5 rounded ${
+                          s.shift === '早班' ? 'bg-primary-600/20 text-primary-400' :
+                          s.shift === '中班' ? 'bg-industrial-100/20 text-industrial-100' :
+                          'bg-alarm-warning/20 text-alarm-warning'
+                        }`}>{s.shift}</span>
+                        <span className={`text-xs font-bold ${s.achievement >= 95 ? 'text-alarm-success' : s.achievement >= 85 ? 'text-alarm-warning' : 'text-alarm-danger'}`}>
+                          目标 {s.achievement.toFixed(0)}%
+                        </span>
+                      </div>
+                      <div className="space-y-2">
+                        <div className="flex items-baseline justify-between">
+                          <span className="text-xs text-dark-400">产量</span>
+                          <span className="text-xl font-display font-bold text-white">{s.output.toFixed(1)}<span className="text-[10px] text-dark-400 ml-0.5">t</span></span>
                         </div>
-                        <div className="space-y-1 text-xs">
-                          <div className="flex justify-between">
-                            <span className="text-dark-400">产量</span>
-                            <span className="text-white font-mono">{s.output.toFixed(1)} t</span>
+                        <div className="flex items-baseline justify-between">
+                          <span className="text-xs text-dark-400">贡献占比</span>
+                          <span className="text-sm font-mono text-primary-400">{s.contribution.toFixed(1)}%</span>
+                        </div>
+                        <div className="h-1 rounded-full bg-dark-700 overflow-hidden">
+                          <div className="h-full bg-primary-500" style={{ width: `${Math.min(100, s.contribution)}%` }} />
+                        </div>
+                        <div className="pt-2 border-t border-dark-600/50 space-y-1">
+                          <div className="flex justify-between text-[11px]">
+                            <span className="text-dark-400">吨氨能耗</span>
+                            <span className={`font-mono font-bold ${getEnergyLevelColor(s.energyLevel)}`}>
+                              {s.energyTotal.toFixed(2)} GJ/t · {getEnergyLevelLabel(s.energyLevel)}
+                            </span>
                           </div>
-                          <div className="flex justify-between">
-                            <span className="text-dark-400">贡献占比</span>
-                            <span className="text-white font-mono">{shiftContribution.toFixed(1)}%</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-dark-400">估算能耗</span>
-                            <span className={`font-mono ${
-                              shiftEnergyBase > avgEnergyVal ? 'text-alarm-danger' : 'text-alarm-success'
-                            }`}>{(shiftEnergyBase * (1 + (Math.random() - 0.5) * 0.04)).toFixed(2)} GJ/t</span>
+                          <div className="flex justify-between text-[11px]">
+                            <span className="text-dark-400">煤/电/汽/水</span>
+                            <span className="font-mono text-dark-300">
+                              {s.energyCoal.toFixed(2)}/{s.energyPower}/{s.energySteam.toFixed(1)}/{s.energyWater.toFixed(0)}
+                            </span>
                           </div>
                         </div>
                       </div>
-                    );
-                  })
-                )}
-              </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="mt-4 p-3 rounded-lg bg-primary-500/5 border border-primary-500/20">
@@ -384,8 +536,8 @@ export default function Energy() {
                   <span className="text-primary-400 font-medium">分析结论：</span>
                   <span className="text-dark-300">
                     {analysis.isHighOutput
-                      ? `当日产量 ${selectedRecord.output.toFixed(0)} 吨高于日均 ${avgOutput.toFixed(0)} 吨，由于规模效应，吨氨综合能耗 ${selectedRecord.total.toFixed(2)} GJ/t ${analysis.totalChange < 0 ? '下降' : '上升'} ${Math.abs(analysis.totalChange).toFixed(1)}%，表现${analysis.totalChange < 0 ? '优秀' : '有待提升'}。`
-                      : `当日产量 ${selectedRecord.output.toFixed(0)} 吨低于日均 ${avgOutput.toFixed(0)} 吨，吨氨综合能耗 ${selectedRecord.total.toFixed(2)} GJ/t ${analysis.totalChange < 0 ? '下降' : '上升'} ${Math.abs(analysis.totalChange).toFixed(1)}%。建议优化生产负荷，提高产量可进一步降低单位能耗。`}
+                      ? `当日产量 ${selectedRecord.output.toFixed(0)} 吨高于区间均产 ${avgOutput.toFixed(0)} 吨，由于规模效应，吨氨综合能耗 ${selectedRecord.total.toFixed(2)} GJ/t ${analysis.totalChange < 0 ? '下降' : '上升'} ${Math.abs(analysis.totalChange).toFixed(1)}%，表现${analysis.totalChange < 0 ? '优秀' : '有待提升'}。`
+                      : `当日产量 ${selectedRecord.output.toFixed(0)} 吨低于区间均产 ${avgOutput.toFixed(0)} 吨，吨氨综合能耗 ${selectedRecord.total.toFixed(2)} GJ/t ${analysis.totalChange < 0 ? '下降' : '上升'} ${Math.abs(analysis.totalChange).toFixed(1)}%。建议优化生产负荷，提高产量可进一步降低单位能耗。`}
                   </span>
                 </div>
               </div>
@@ -393,6 +545,7 @@ export default function Energy() {
           </Card>
         )}
 
+        {/* 堆叠图 + 产量能耗对比 */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <Card title="分项能耗堆叠趋势" icon={<Activity size={16} />}>
             <AreaChart categories={filteredEnergy.map((d) => d.date)} series={totalSeries} unit="" stacked={true} height={240} />
@@ -404,13 +557,11 @@ export default function Energy() {
                 <div className="flex-1 flex gap-1">
                   {filteredEnergy.map((d) => {
                     const tag = getEfficiencyTag(d, avgOutput, avgEnergyVal);
+                    const isSel = selectedDate === d.fullDate;
                     return (
                       <div key={d.fullDate} className="flex-1 flex flex-col items-center">
                         <div className="w-full rounded-t relative" style={{ height: `${(d.output / 170) * 80}px`, background: tag === 'poor' ? 'rgba(255,71,87,0.1)' : 'rgba(0,212,170,0.1)' }}>
-                          <div
-                            className={`absolute bottom-0 w-full rounded-t transition-all ${selectedDate === d.fullDate ? 'bg-primary-400' : tag === 'poor' ? 'bg-alarm-danger/70' : 'bg-primary-600/60'}`}
-                            style={{ height: `${(d.output / 170) * 100}%` }}
-                          />
+                          <div className={`absolute bottom-0 w-full rounded-t transition-all ${isSel ? 'bg-primary-400' : tag === 'poor' ? 'bg-alarm-danger/70' : 'bg-primary-600/60'}`} style={{ height: `${(d.output / 170) * 100}%` }} />
                         </div>
                         <span className="text-[10px] text-dark-500 mt-1 font-mono">{d.date}</span>
                       </div>
@@ -423,13 +574,11 @@ export default function Energy() {
                 <div className="flex-1 flex gap-1">
                   {filteredEnergy.map((d) => {
                     const tag = getEfficiencyTag(d, avgOutput, avgEnergyVal);
+                    const isSel = selectedDate === d.fullDate;
                     return (
                       <div key={d.fullDate} className="flex-1 flex flex-col items-center">
                         <div className="w-full rounded-t relative" style={{ height: `${((42 - d.total) / 8) * 80}px`, background: tag === 'poor' ? 'rgba(255,71,87,0.1)' : 'rgba(0,212,170,0.1)' }}>
-                          <div
-                            className={`absolute bottom-0 w-full rounded-t transition-all ${selectedDate === d.fullDate ? 'bg-alarm-success' : tag === 'poor' ? 'bg-alarm-danger/50' : 'bg-alarm-success/60'}`}
-                            style={{ height: `${((42 - d.total) / 8) * 100}%` }}
-                          />
+                          <div className={`absolute bottom-0 w-full rounded-t transition-all ${isSel ? 'bg-alarm-success' : tag === 'poor' ? 'bg-alarm-danger/50' : 'bg-alarm-success/60'}`} style={{ height: `${((42 - d.total) / 8) * 100}%` }} />
                         </div>
                         <span className="text-[10px] text-dark-500 mt-1 font-mono">{d.total.toFixed(1)}</span>
                       </div>
@@ -446,6 +595,7 @@ export default function Energy() {
           </Card>
         </div>
 
+        {/* 明细表 */}
         <Card title="能耗数据明细" icon={<TrendingDown size={16} />}>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">

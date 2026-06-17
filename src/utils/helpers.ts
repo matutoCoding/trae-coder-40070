@@ -195,32 +195,285 @@ export const generateDailyEvaluation = (
   avgEnergy: number,
   hotSpotTemp: number,
   alarmCount: number,
-): string => {
-  if (!energy) return '暂无数据';
-  const tag = getEfficiencyTag(energy, avgOutput, avgEnergy);
+  shiftData?: ProductionRecord[],
+): { summary: string; anomalies: string[]; suggestions: string[]; nextShiftNote: string } => {
+  const anomalies: string[] = [];
+  const suggestions: string[] = [];
   const parts: string[] = [];
+
+  if (!energy) {
+    return {
+      summary: '暂无数据，无法生成当日运行评价。',
+      anomalies: [],
+      suggestions: [],
+      nextShiftNote: '请保持正常生产节奏，密切关注工艺参数变化。',
+    };
+  }
+
+  const tag = getEfficiencyTag(energy, avgOutput, avgEnergy);
+
+  // 总体结论
   if (tag === 'excellent') {
-    parts.push(`当日生产运行优秀，产量${energy.output.toFixed(0)}吨高于日均${avgOutput.toFixed(0)}吨，综合能耗${energy.total.toFixed(2)} GJ/t低于平均${avgEnergy.toFixed(2)} GJ/t，规模效益发挥充分。`);
+    parts.push(`当日生产运行优秀，产量${energy.output.toFixed(1)}吨高于日均${avgOutput.toFixed(0)}吨，综合能耗${energy.total.toFixed(2)} GJ/t低于平均${avgEnergy.toFixed(2)} GJ/t，规模效益发挥充分，实现高产低耗。`);
   } else if (tag === 'poor') {
-    parts.push(`当日生产运行欠佳，产量${energy.output.toFixed(0)}吨低于日均${avgOutput.toFixed(0)}吨，综合能耗${energy.total.toFixed(2)} GJ/t高于平均${avgEnergy.toFixed(2)} GJ/t，建议排查设备状况、优化工艺参数。`);
+    parts.push(`当日生产运行欠佳，产量${energy.output.toFixed(1)}吨低于日均${avgOutput.toFixed(0)}吨，综合能耗${energy.total.toFixed(2)} GJ/t高于平均${avgEnergy.toFixed(2)} GJ/t，处于低产高耗状态，需全面排查原因。`);
+    anomalies.push(`日产量 ${energy.output.toFixed(1)} 吨，低于日均 ${avgOutput.toFixed(0)} 吨 ${((1 - energy.output / avgOutput) * 100).toFixed(1)}%`);
+    anomalies.push(`综合能耗 ${energy.total.toFixed(2)} GJ/t，高于日均 ${avgEnergy.toFixed(2)} GJ/t ${(((energy.total / avgEnergy) - 1) * 100).toFixed(1)}%`);
+    suggestions.push('排查设备运行状况，重点检查合成塔催化剂活性、压缩机效率');
+    suggestions.push('评估原料气质量与氢氮比是否在最佳区间');
   } else if (tag === 'good') {
-    parts.push(`当日生产运行良好，产量与能耗均优于平均水平，继续保持当前操作参数。`);
+    parts.push(`当日生产运行良好，产量与能耗均优于平均水平，操作参数合理，继续保持当前工况。`);
   } else {
-    parts.push(`当日生产运行正常，产量${energy.output.toFixed(0)}吨，综合能耗${energy.total.toFixed(2)} GJ/t，各项指标基本稳定。`);
+    parts.push(`当日生产运行正常，产量${energy.output.toFixed(1)}吨，综合能耗${energy.total.toFixed(2)} GJ/t，各项指标基本稳定。`);
   }
+
+  // 班次达成情况
+  if (shiftData && shiftData.length > 0) {
+    const shiftsReport = shiftData.map((s) => {
+      const rate = ((s.output / s.target) * 100).toFixed(0);
+      return `${s.shift}${rate}%`;
+    }).join('、');
+    parts.push(`班组目标达成情况：${shiftsReport}。`);
+    const underAchieved = shiftData.filter((s) => s.output / s.target < 0.9);
+    if (underAchieved.length > 0) {
+      anomalies.push(`${underAchieved.map((s) => s.shift).join('、')} 产量未达目标的90%`);
+    }
+  }
+
+  // 温度异常
   if (hotSpotTemp > 510) {
-    parts.push(`合成塔热点温度${hotSpotTemp.toFixed(0)}℃偏高，需密切关注床层温度变化，防止超温。`);
+    anomalies.push(`合成塔热点温度 ${hotSpotTemp.toFixed(0)}℃ 偏高，接近上限`);
+    suggestions.push('降低入塔温度或适当减少补气量，防止催化剂过热失活');
   } else if (hotSpotTemp < 475) {
-    parts.push(`合成塔热点温度${hotSpotTemp.toFixed(0)}℃偏低，可能影响合成效率，建议适当调整入塔温度。`);
+    anomalies.push(`合成塔热点温度 ${hotSpotTemp.toFixed(0)}℃ 偏低`);
+    suggestions.push('适当提高入塔温度或调整循环气量，保证合成反应效率');
   }
+
+  // 告警
   if (alarmCount > 0) {
-    parts.push(`当日共${alarmCount}条告警信息，请及时处理。`);
+    anomalies.push(`当日共 ${alarmCount} 条未处理告警`);
+    suggestions.push('优先处理高等级告警，消除设备安全隐患');
   }
+
+  // 能耗分项异常
   if (energy.coal > 1.2) {
-    parts.push(`吨氨耗煤${energy.coal.toFixed(3)} t/t偏高，建议优化气化炉操作条件。`);
+    anomalies.push(`吨氨耗煤 ${energy.coal.toFixed(3)} t/t 偏高`);
+    suggestions.push('优化气化炉氧煤比与蒸汽用量，提高碳转化率');
   }
   if (energy.power > 1350) {
-    parts.push(`吨氨电耗${energy.power.toFixed(0)} kWh/t偏高，检查压缩机及冰机运行效率。`);
+    anomalies.push(`吨氨电耗 ${energy.power.toFixed(0)} kWh/t 偏高`);
+    suggestions.push('检查压缩机运行工况，评估变频调节空间，降低空转损耗');
   }
-  return parts.join('');
+  if (energy.steam > 3.1) {
+    anomalies.push(`吨氨蒸汽 ${energy.steam.toFixed(2)} t/t 偏高`);
+    suggestions.push('检查变换工段蒸汽消耗，优化废热回收利用');
+  }
+  if (energy.water > 21) {
+    anomalies.push(`吨氨循环水 ${energy.water.toFixed(1)} m³/t 偏高`);
+    suggestions.push('检查水冷器换热效率，清理结垢，降低循环水用量');
+  }
+
+  // 下一班建议
+  let nextShiftNote = '下一班请保持当前稳定工况，重点关注合成塔温度与氨冷液位，确保生产连续平稳。';
+  if (anomalies.length >= 2) {
+    nextShiftNote = `下一班需重点处理：${anomalies.slice(0, 2).join('；')}，及时消除隐患，争取高产低耗。`;
+  } else if (tag === 'excellent') {
+    nextShiftNote = '当日运行状态优秀，下一班请延续当前操作参数，保持高负荷稳定运行。';
+  } else if (tag === 'poor') {
+    nextShiftNote = '当日运行欠佳，下一班请重点排查产量偏低原因，优化工艺参数，尽快恢复高产低耗状态。';
+  }
+
+  if (suggestions.length === 0) {
+    suggestions.push('保持当前优化的工艺参数，持续监控关键指标');
+  }
+
+  return {
+    summary: parts.join(''),
+    anomalies,
+    suggestions,
+    nextShiftNote,
+  };
+};
+
+// 确定性伪随机（基于字符串哈希，保证同一输入得到同一结果）
+const hashStr = (s: string): number => {
+  let hash = 0;
+  for (let i = 0; i < s.length; i++) {
+    const chr = s.charCodeAt(i);
+    hash = (hash << 5) - hash + chr;
+    hash |= 0;
+  }
+  return Math.abs(hash);
+};
+
+const deterministicRandom = (seed: string, offset: number = 0): number => {
+  const h = hashStr(seed + '_' + offset);
+  return (h % 1000) / 1000; // 0 ~ 0.999
+};
+
+export interface ShiftEnergyDetail {
+  shift: Shift;
+  output: number;
+  target: number;
+  achievement: number;
+  contribution: number;
+  energyTotal: number;
+  energyCoal: number;
+  energyPower: number;
+  energySteam: number;
+  energyWater: number;
+  energyLevel: 'low' | 'normal' | 'high';
+}
+
+export const calcShiftEnergy = (
+  date: string,
+  shift: Shift,
+  shiftOutput: number,
+  shiftTarget: number,
+  dayTotalOutput: number,
+  dayEnergy: EnergyRecord,
+): ShiftEnergyDetail => {
+  const seed = `${date}_${shift}`;
+  const contribution = dayTotalOutput > 0 ? (shiftOutput / dayTotalOutput) * 100 : 0;
+  const achievement = shiftTarget > 0 ? (shiftOutput / shiftTarget) * 100 : 0;
+
+  // 基于班次产量达成率 + 确定性随机，计算该班能耗系数
+  const baseFactor = 1 + (1 - Math.min(1.1, achievement / 100)) * 0.06; // 产量越低能耗越高
+  const jitter1 = (deterministicRandom(seed, 1) - 0.5) * 0.04;
+  const factor = Math.max(0.92, Math.min(1.08, baseFactor + jitter1));
+
+  // 分项能耗
+  const jitter2 = (deterministicRandom(seed, 2) - 0.5) * 0.03;
+  const jitter3 = (deterministicRandom(seed, 3) - 0.5) * 0.03;
+  const jitter4 = (deterministicRandom(seed, 4) - 0.5) * 0.03;
+  const jitter5 = (deterministicRandom(seed, 5) - 0.5) * 0.03;
+
+  const energyTotal = Number((dayEnergy.total * factor).toFixed(2));
+  const energyCoal = Number((dayEnergy.coal * factor * (1 + jitter2)).toFixed(3));
+  const energyPower = Number((dayEnergy.power * factor * (1 + jitter3)).toFixed(0));
+  const energySteam = Number((dayEnergy.steam * factor * (1 + jitter4)).toFixed(2));
+  const energyWater = Number((dayEnergy.water * factor * (1 + jitter5)).toFixed(1));
+
+  // 判断能耗水平：相对日均值
+  let energyLevel: 'low' | 'normal' | 'high' = 'normal';
+  if (energyTotal <= dayEnergy.total * 0.98) energyLevel = 'low';
+  else if (energyTotal >= dayEnergy.total * 1.02) energyLevel = 'high';
+
+  return {
+    shift,
+    output: shiftOutput,
+    target: shiftTarget,
+    achievement,
+    contribution,
+    energyTotal,
+    energyCoal,
+    energyPower,
+    energySteam,
+    energyWater,
+    energyLevel,
+  };
+};
+
+export const getDateShiftEnergy = (
+  productionData: ProductionRecord[],
+  energyData: EnergyRecord[],
+  fullDate: string,
+): { shifts: ShiftEnergyDetail[]; totalOutput: number } => {
+  const dayShifts = productionData.filter((p) => p.fullDate === fullDate);
+  const dayEnergy = getEnergyForDate(energyData, fullDate);
+  const totalOutput = dayShifts.reduce((s, p) => s + p.output, 0);
+
+  if (!dayEnergy || dayShifts.length === 0) {
+    return { shifts: [], totalOutput: 0 };
+  }
+
+  const shifts = dayShifts.map((p) =>
+    calcShiftEnergy(fullDate, p.shift, p.output, p.target, totalOutput, dayEnergy)
+  );
+  return { shifts, totalOutput };
+};
+
+export interface ShiftCompareStats {
+  shift: Shift;
+  totalOutput: number;
+  avgOutput: number;
+  shiftCount: number;
+  totalTarget: number;
+  avgAchievement: number;
+  avgEnergyTotal: number;
+  avgEnergyCoal: number;
+  avgEnergyPower: number;
+  dailyRecords: { fullDate: string; shortDate: string; output: number; achievement: number; energyTotal: number; energyLevel: 'low' | 'normal' | 'high' }[];
+}
+
+export const compareShiftsByRange = (
+  productionData: ProductionRecord[],
+  energyData: EnergyRecord[],
+  startDate: string,
+  endDate: string,
+): ShiftCompareStats[] => {
+  const shifts: Shift[] = ['早班', '中班', '晚班'];
+  const filteredProductions = filterProduction(productionData, startDate, endDate, 'all');
+
+  return shifts.map((shiftName) => {
+    const shiftRecords = filteredProductions.filter((p) => p.shift === shiftName);
+    const dailyRecords: ShiftCompareStats['dailyRecords'] = [];
+
+    shiftRecords.forEach((p) => {
+      const dayEnergy = getEnergyForDate(energyData, p.fullDate);
+      if (!dayEnergy) return;
+      const shiftEnergy = calcShiftEnergy(p.fullDate, p.shift, p.output, p.target, p.output + 1, dayEnergy);
+      dailyRecords.push({
+        fullDate: p.fullDate,
+        shortDate: p.date,
+        output: p.output,
+        achievement: (p.output / p.target) * 100,
+        energyTotal: shiftEnergy.energyTotal,
+        energyLevel: shiftEnergy.energyLevel,
+      });
+    });
+
+    const totalOutput = shiftRecords.reduce((s, p) => s + p.output, 0);
+    const totalTarget = shiftRecords.reduce((s, p) => s + p.target, 0);
+    const avgEnergyTotal = dailyRecords.length > 0
+      ? dailyRecords.reduce((s, d) => s + d.energyTotal, 0) / dailyRecords.length
+      : 0;
+    const avgEnergyCoal = dailyRecords.length > 0
+      ? dailyRecords.reduce((s, d) => s + (getEnergyForDate(energyData, d.fullDate)?.coal || 0), 0) / dailyRecords.length
+      : 0;
+    const avgEnergyPower = dailyRecords.length > 0
+      ? dailyRecords.reduce((s, d) => s + (getEnergyForDate(energyData, d.fullDate)?.power || 0), 0) / dailyRecords.length
+      : 0;
+
+    return {
+      shift: shiftName,
+      totalOutput,
+      avgOutput: shiftRecords.length > 0 ? totalOutput / shiftRecords.length : 0,
+      shiftCount: shiftRecords.length,
+      totalTarget,
+      avgAchievement: totalTarget > 0 ? (totalOutput / totalTarget) * 100 : 0,
+      avgEnergyTotal: Number(avgEnergyTotal.toFixed(2)),
+      avgEnergyCoal: Number(avgEnergyCoal.toFixed(3)),
+      avgEnergyPower: Number(avgEnergyPower.toFixed(0)),
+      dailyRecords,
+    };
+  });
+};
+
+export const getShiftRankings = (stats: ShiftCompareStats[]) => {
+  const byOutput = [...stats].sort((a, b) => b.totalOutput - a.totalOutput).map((s) => s.shift);
+  const byEnergy = [...stats].sort((a, b) => a.avgEnergyTotal - b.avgEnergyTotal).map((s) => s.shift);
+  return { byOutput, byEnergy };
+};
+
+export const getEnergyLevelColor = (level: 'low' | 'normal' | 'high'): string => {
+  if (level === 'low') return 'text-alarm-success';
+  if (level === 'high') return 'text-alarm-danger';
+  return 'text-dark-300';
+};
+
+export const getEnergyLevelLabel = (level: 'low' | 'normal' | 'high'): string => {
+  if (level === 'low') return '偏低';
+  if (level === 'high') return '偏高';
+  return '正常';
 };

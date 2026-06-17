@@ -9,12 +9,11 @@ import { useAppStore } from '@/store/appStore';
 import { generateTimeSeries } from '@/data/mockData';
 import {
   formatNumber,
-  getTodayTotalOutput,
-  getYesterdayTotalOutput,
   getTodayLocalStr,
   getDateDaysAgo,
   filterProduction,
   aggregateProductionStats,
+  getDateShiftEnergy,
 } from '@/utils/helpers';
 import type { Shift } from '@/types';
 
@@ -33,15 +32,23 @@ const QUICK_RANGES = [
 ];
 
 export default function Production() {
-  const { productionData } = useAppStore();
+  const { productionData, energyData } = useAppStore();
 
   const [startDate, setStartDate] = useState(getDateDaysAgo(6));
   const [endDate, setEndDate] = useState(getTodayLocalStr());
   const [selectedShifts, setSelectedShifts] = useState<Shift[] | 'all'>('all');
   const [activeRange, setActiveRange] = useState(2);
 
-  const todayOutput = getTodayTotalOutput(productionData);
-  const yesterdayOutput = getYesterdayTotalOutput(productionData);
+  const todayShiftData = useMemo(
+    () => getDateShiftEnergy(productionData, energyData, getTodayLocalStr()),
+    [productionData, energyData]
+  );
+  const yesterdayShiftData = useMemo(
+    () => getDateShiftEnergy(productionData, energyData, getDateDaysAgo(1)),
+    [productionData, energyData]
+  );
+  const todayOutput = todayShiftData.totalOutput;
+  const yesterdayOutput = yesterdayShiftData.totalOutput;
   const outputTrend = yesterdayOutput > 0
     ? (((todayOutput - yesterdayOutput) / yesterdayOutput) * 100)
     : 0;
