@@ -16,6 +16,9 @@ import {
   ChevronUp,
   Trophy,
   Award,
+  Sparkles,
+  AlertCircle,
+  ArrowRight,
 } from 'lucide-react';
 import Layout from '@/components/layout/Layout';
 import Card from '@/components/ui/Card';
@@ -40,6 +43,8 @@ import {
   getShiftRankings,
   getEnergyLevelColor,
   getEnergyLevelLabel,
+  findOpportunityDays,
+  getEnergyForDate,
 } from '@/utils/helpers';
 import type { Shift } from '@/types';
 
@@ -64,6 +69,13 @@ export default function Energy() {
     () => getDateShiftEnergy(productionData, energyData, getTodayLocalStr()),
     [productionData, energyData]
   );
+  const yesterdayShiftData = useMemo(
+    () => getDateShiftEnergy(productionData, energyData, getDateDaysAgo(1)),
+    [productionData, energyData]
+  );
+  const todayVsYesterdayOutput = yesterdayShiftData.totalOutput > 0
+    ? (((todayShiftData.totalOutput - yesterdayShiftData.totalOutput) / yesterdayShiftData.totalOutput) * 100)
+    : 0;
 
   const filteredEnergy = useMemo(
     () => filterEnergyByRange(energyData, startDate, endDate),
@@ -72,6 +84,18 @@ export default function Energy() {
 
   const avgOutput = filteredEnergy.reduce((s, d) => s + d.output, 0) / Math.max(1, filteredEnergy.length);
   const avgEnergyVal = filteredEnergy.reduce((s, d) => s + d.total, 0) / Math.max(1, filteredEnergy.length);
+
+  // 节能机会：标杆日 vs 待改进日
+  const opportunity = useMemo(
+    () => findOpportunityDays(filteredEnergy, avgOutput, avgEnergyVal),
+    [filteredEnergy, avgOutput, avgEnergyVal]
+  );
+  const [opportunityDayA, setOpportunityDayA] = useState<string | null>(null);
+  const [opportunityDayB, setOpportunityDayB] = useState<string | null>(null);
+  const oppA = opportunityDayA ? getEnergyForDate(filteredEnergy, opportunityDayA) : undefined;
+  const oppB = opportunityDayB ? getEnergyForDate(filteredEnergy, opportunityDayB) : undefined;
+  const oppAShift = opportunityDayA ? getDateShiftEnergy(productionData, energyData, opportunityDayA) : undefined;
+  const oppBShift = opportunityDayB ? getDateShiftEnergy(productionData, energyData, opportunityDayB) : undefined;
 
   const coalSaving = prevEnergy && todayEnergy ? (((prevEnergy.coal - todayEnergy.coal) / prevEnergy.coal) * 100).toFixed(2) : '0';
   const powerSaving = prevEnergy && todayEnergy ? (((prevEnergy.power - todayEnergy.power) / prevEnergy.power) * 100).toFixed(2) : '0';
@@ -140,7 +164,7 @@ export default function Energy() {
             unit="吨"
             decimals={1}
             icon={<Factory size={20} />}
-            trend={Number(outputTrend)}
+            trend={todayVsYesterdayOutput}
             trendLabel="较昨日"
             color="text-primary-400"
           />
@@ -263,6 +287,159 @@ export default function Energy() {
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-dark-500"></span> 运行正常</span>
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-alarm-danger"></span> 低产高耗</span>
           </div>
+        </Card>
+
+        {/* 节能机会看板 */}
+        <Card
+          title="节能机会看板"
+          icon={<Sparkles size={16} className="text-alarm-success" />}
+          extra="自动识别高产低耗标杆日与低产高耗待改进日"
+        >
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="p-4 rounded-lg bg-alarm-success/5 border border-alarm-success/20">
+              <div className="flex items-center gap-2 mb-3">
+                <Sparkles size={14} className="text-alarm-success" />
+                <span className="text-sm font-medium text-white">🏆 标杆日 · 高产低耗参考</span>
+                <span className="ml-auto text-xs text-alarm-success">{opportunity.benchmarks.length} 天</span>
+              </div>
+              <div className="space-y-1.5 mb-3">
+                {opportunity.benchmarks.length === 0 ? (
+                  <div className="text-xs text-dark-400 py-2">当前区间暂无明显标杆日</div>
+                ) : (
+                  opportunity.benchmarks.slice(0, 4).map((d) => (
+                    <button
+                      key={d.fullDate}
+                      onClick={() => setOpportunityDayA(d.fullDate)}
+                      className={`w-full flex items-center gap-3 p-2 rounded text-left text-xs transition-colors ${
+                        opportunityDayA === d.fullDate
+                          ? 'bg-alarm-success/20 border border-alarm-success/40'
+                          : 'bg-dark-800/40 hover:bg-dark-700/50 border border-transparent'
+                      }`}
+                    >
+                      <span className="font-mono text-white w-14">{d.date}</span>
+                      <span className="text-primary-400 font-mono">{d.output.toFixed(0)}t</span>
+                      <span className="text-dark-500">产能 +{d.gapOutput.toFixed(0)}%</span>
+                      <span className="ml-auto font-mono text-alarm-success">{d.total.toFixed(2)} GJ/t</span>
+                      <span className="text-dark-500">省 {Math.abs(d.gapTotal).toFixed(0)}%</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+            <div className="p-4 rounded-lg bg-alarm-danger/5 border border-alarm-danger/20">
+              <div className="flex items-center gap-2 mb-3">
+                <AlertCircle size={14} className="text-alarm-danger" />
+                <span className="text-sm font-medium text-white">⚠ 待改进日 · 低产高耗复盘</span>
+                <span className="ml-auto text-xs text-alarm-danger">{opportunity.improvements.length} 天</span>
+              </div>
+              <div className="space-y-1.5 mb-3">
+                {opportunity.improvements.length === 0 ? (
+                  <div className="text-xs text-dark-400 py-2">当前区间暂无明显待改进日 ✅</div>
+                ) : (
+                  opportunity.improvements.slice(0, 4).map((d) => (
+                    <button
+                      key={d.fullDate}
+                      onClick={() => setOpportunityDayB(d.fullDate)}
+                      className={`w-full flex items-center gap-3 p-2 rounded text-left text-xs transition-colors ${
+                        opportunityDayB === d.fullDate
+                          ? 'bg-alarm-danger/20 border border-alarm-danger/40'
+                          : 'bg-dark-800/40 hover:bg-dark-700/50 border border-transparent'
+                      }`}
+                    >
+                      <span className="font-mono text-white w-14">{d.date}</span>
+                      <span className="text-primary-400 font-mono">{d.output.toFixed(0)}t</span>
+                      <span className="text-alarm-danger">产能 {d.gapOutput.toFixed(0)}%</span>
+                      <span className="ml-auto font-mono text-alarm-danger">{d.total.toFixed(2)} GJ/t</span>
+                      <span className="text-dark-500">耗 +{d.gapTotal.toFixed(0)}%</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+
+          {(oppA || oppB) && (
+            <div className={`mt-4 p-4 rounded-lg border grid grid-cols-1 md:grid-cols-3 gap-4 ${
+              oppA && oppB ? 'bg-primary-500/5 border-primary-500/20' : 'bg-dark-700/20 border-dark-600'
+            }`}>
+              <div>
+                <div className="text-xs text-alarm-success mb-2">标杆日 {oppA?.date || '—'}</div>
+                {oppA ? (
+                  <div className="space-y-1 text-xs">
+                    <div className="flex justify-between"><span className="text-dark-400">日产量</span><span className="text-primary-400 font-mono">{oppA.output.toFixed(1)} t</span></div>
+                    <div className="flex justify-between"><span className="text-dark-400">综合能耗</span><span className="text-alarm-success font-mono">{oppA.total.toFixed(2)} GJ/t</span></div>
+                    <div className="flex justify-between"><span className="text-dark-400">吨煤/电/汽/水</span><span className="text-white font-mono text-[10px]">{oppA.coal.toFixed(2)}/{oppA.power}/{oppA.steam.toFixed(1)}/{oppA.water.toFixed(0)}</span></div>
+                  </div>
+                ) : <div className="text-xs text-dark-500">未选中</div>}
+              </div>
+              <div className="flex flex-col items-center justify-center">
+                <ArrowRight size={24} className="text-primary-400 mb-1" />
+                {oppA && oppB ? (
+                  <div className="space-y-1 text-center">
+                    <div className="text-[11px] text-dark-400">能耗差值</div>
+                    <div className="text-lg font-display font-bold text-alarm-success">
+                      {(oppB.total - oppA.total).toFixed(2)}<span className="text-xs text-dark-400 ml-1">GJ/t</span>
+                    </div>
+                    <div className="text-[11px] text-primary-400">
+                      按均产{avgOutput.toFixed(0)}吨算，日可省
+                      <br /><b className="text-white">{(avgOutput * (oppB.total - oppA.total)).toFixed(0)}</b> GJ
+                    </div>
+                  </div>
+                ) : <div className="text-[11px] text-dark-500">选中两日对比</div>}
+              </div>
+              <div>
+                <div className="text-xs text-alarm-danger mb-2">待改进日 {oppB?.date || '—'}</div>
+                {oppB ? (
+                  <div className="space-y-1 text-xs">
+                    <div className="flex justify-between"><span className="text-dark-400">日产量</span><span className="text-primary-400 font-mono">{oppB.output.toFixed(1)} t</span></div>
+                    <div className="flex justify-between"><span className="text-dark-400">综合能耗</span><span className="text-alarm-danger font-mono">{oppB.total.toFixed(2)} GJ/t</span></div>
+                    <div className="flex justify-between"><span className="text-dark-400">吨煤/电/汽/水</span><span className="text-white font-mono text-[10px]">{oppB.coal.toFixed(2)}/{oppB.power}/{oppB.steam.toFixed(1)}/{oppB.water.toFixed(0)}</span></div>
+                  </div>
+                ) : <div className="text-xs text-dark-500">未选中</div>}
+              </div>
+            </div>
+          )}
+
+          {(oppAShift || oppBShift) && (
+            <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+              {oppAShift && (
+                <div className="p-3 rounded-lg bg-alarm-success/5 border border-alarm-success/20">
+                  <div className="text-xs font-medium text-alarm-success mb-2">标杆日 {oppA?.date} 班组表现</div>
+                  <div className="space-y-1 text-[11px]">
+                    {oppAShift.shifts.map((s, i) => (
+                      <div key={i} className="flex items-center justify-between py-1 border-b border-dark-700/40 last:border-b-0">
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                          s.shift === '早班' ? 'bg-primary-600/20 text-primary-400' :
+                          s.shift === '中班' ? 'bg-industrial-100/20 text-industrial-100' :
+                          'bg-alarm-warning/20 text-alarm-warning'
+                        }`}>{s.shift}</span>
+                        <span className="font-mono text-white">{s.output.toFixed(1)}t / {s.achievement.toFixed(0)}%</span>
+                        <span className={`font-mono ${getEnergyLevelColor(s.energyLevel)}`}>{s.energyTotal.toFixed(2)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {oppBShift && (
+                <div className="p-3 rounded-lg bg-alarm-danger/5 border border-alarm-danger/20">
+                  <div className="text-xs font-medium text-alarm-danger mb-2">待改进日 {oppB?.date} 班组表现</div>
+                  <div className="space-y-1 text-[11px]">
+                    {oppBShift.shifts.map((s, i) => (
+                      <div key={i} className="flex items-center justify-between py-1 border-b border-dark-700/40 last:border-b-0">
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                          s.shift === '早班' ? 'bg-primary-600/20 text-primary-400' :
+                          s.shift === '中班' ? 'bg-industrial-100/20 text-industrial-100' :
+                          'bg-alarm-warning/20 text-alarm-warning'
+                        }`}>{s.shift}</span>
+                        <span className="font-mono text-white">{s.output.toFixed(1)}t / {s.achievement.toFixed(0)}%</span>
+                        <span className={`font-mono ${getEnergyLevelColor(s.energyLevel)}`}>{s.energyTotal.toFixed(2)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </Card>
 
         {/* 班组对比视角 */}

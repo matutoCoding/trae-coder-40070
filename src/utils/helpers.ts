@@ -477,3 +477,379 @@ export const getEnergyLevelLabel = (level: 'low' | 'normal' | 'high'): string =>
   if (level === 'high') return '偏高';
   return '正常';
 };
+
+export interface ImpactFactor {
+  key: string;
+  name: string;
+  category: '温度' | '告警' | '能耗' | '产量' | '班组';
+  impact: number;
+  severity: 'high' | 'medium' | 'low' | 'good';
+  description: string;
+  suggestion: string;
+}
+
+export const analyzeImpactFactors = (params: {
+  hotSpotTemp: number;
+  alarmCount: number;
+  energy: EnergyRecord;
+  avgOutput: number;
+  avgEnergy: number;
+  shiftEnergy: ShiftEnergyDetail[];
+}): ImpactFactor[] => {
+  const factors: ImpactFactor[] = [];
+  const { hotSpotTemp, alarmCount, energy, avgOutput, avgEnergy, shiftEnergy } = params;
+
+  // 1. 产量因素
+  const outputGap = ((energy.output - avgOutput) / avgOutput) * 100;
+  if (outputGap <= -5) {
+    factors.push({
+      key: 'low_output', name: '日产量偏低', category: '产量',
+      impact: Math.abs(outputGap) * 1.2,
+      severity: outputGap <= -10 ? 'high' : 'medium',
+      description: `当日产量 ${energy.output.toFixed(1)} 吨，低于均值 ${avgOutput.toFixed(0)} 吨 ${Math.abs(outputGap).toFixed(1)}%`,
+      suggestion: outputGap <= -10 ? '建议排查原料气成分与氢氮比，提高造气工段负荷' : '适当提高合成系统压力，优化循环气量',
+    });
+  } else if (outputGap >= 5) {
+    factors.push({
+      key: 'high_output', name: '产量表现优秀', category: '产量',
+      impact: outputGap * 0.8,
+      severity: 'good',
+      description: `当日产量 ${energy.output.toFixed(1)} 吨，高于均值 ${avgOutput.toFixed(0)} 吨 ${outputGap.toFixed(1)}%`,
+      suggestion: '保持当前操作参数，加强设备巡检防止故障',
+    });
+  }
+
+  // 2. 综合能耗因素
+  const energyGap = ((energy.total - avgEnergy) / avgEnergy) * 100;
+  if (energyGap >= 5) {
+    factors.push({
+      key: 'high_energy', name: '综合能耗偏高', category: '能耗',
+      impact: energyGap * 1.5,
+      severity: energyGap >= 10 ? 'high' : 'medium',
+      description: `吨氨综合能耗 ${energy.total.toFixed(2)} GJ/t，高于均值 ${avgEnergy.toFixed(2)} GJ/t ${energyGap.toFixed(1)}%`,
+      suggestion: energyGap >= 10 ? '立即组织能耗专项分析，重点查气化与合成工段' : '优化工艺参数，减少跑冒滴漏',
+    });
+  } else if (energyGap <= -5) {
+    factors.push({
+      key: 'low_energy', name: '能耗控制优秀', category: '能耗',
+      impact: Math.abs(energyGap) * 1,
+      severity: 'good',
+      description: `吨氨综合能耗 ${energy.total.toFixed(2)} GJ/t，低于均值 ${avgEnergy.toFixed(2)} GJ/t ${Math.abs(energyGap).toFixed(1)}%`,
+      suggestion: '总结操作经验在班组间推广',
+    });
+  }
+
+  // 3. 热点温度因素
+  if (hotSpotTemp > 510) {
+    const delta = hotSpotTemp - 500;
+    factors.push({
+      key: 'high_temp', name: '合成塔热点温度偏高', category: '温度',
+      impact: delta * 0.8,
+      severity: hotSpotTemp > 520 ? 'high' : 'medium',
+      description: `热点温度 ${hotSpotTemp.toFixed(0)}℃，超优值上限 ${(hotSpotTemp - 510).toFixed(0)}℃，可能加速催化剂老化`,
+      suggestion: hotSpotTemp > 520 ? '立即降低入塔温度，必要时减少新鲜气补充量' : '密切监控床层轴向温差，防止局部过热',
+    });
+  } else if (hotSpotTemp < 475) {
+    factors.push({
+      key: 'low_temp', name: '合成塔热点温度偏低', category: '温度',
+      impact: (475 - hotSpotTemp) * 0.5,
+      severity: hotSpotTemp < 465 ? 'high' : 'medium',
+      description: `热点温度 ${hotSpotTemp.toFixed(0)}℃，低于下限 ${(475 - hotSpotTemp).toFixed(0)}℃，合成反应效率下降`,
+      suggestion: '适当提高入塔温度或调整冷激气量，使热点温度回到 480-500℃ 优值区间',
+    });
+  }
+
+  // 4. 告警因素
+  if (alarmCount > 0) {
+    factors.push({
+      key: 'alarms', name: '未处理告警', category: '告警',
+      impact: alarmCount * 5,
+      severity: alarmCount >= 3 ? 'high' : 'medium',
+      description: `当日共 ${alarmCount} 条未处理告警，可能影响生产平稳与设备安全`,
+      suggestion: alarmCount >= 3 ? '优先处理高等级告警，逐一排查根因' : '按优先级顺序确认处理，防止遗漏',
+    });
+  }
+
+  // 5. 煤耗
+  if (energy.coal > 1.22) {
+    factors.push({
+      key: 'coal_high', name: '吨煤耗偏高', category: '能耗',
+      impact: ((energy.coal - 1.2) / 1.2) * 100 * 0.8,
+      severity: energy.coal > 1.26 ? 'high' : 'medium',
+      description: `吨氨耗煤 ${energy.coal.toFixed(3)} t/t，超基准 ${(((energy.coal - 1.2) / 1.2) * 100).toFixed(1)}%`,
+      suggestion: '优化气化炉氧煤比、饱和温度，减少飞灰含碳',
+    });
+  }
+
+  // 6. 电耗
+  if (energy.power > 1380) {
+    factors.push({
+      key: 'power_high', name: '吨电耗偏高', category: '能耗',
+      impact: ((energy.power - 1350) / 1350) * 100 * 0.6,
+      severity: energy.power > 1450 ? 'high' : 'medium',
+      description: `吨氨电耗 ${energy.power.toFixed(0)} kWh/t，超基准 ${(((energy.power - 1350) / 1350) * 100).toFixed(1)}%`,
+      suggestion: '检查压缩机、冰机、循环机运行效率，避免空载运行',
+    });
+  }
+
+  // 7. 班组达成率
+  const underShifts = shiftEnergy.filter((s) => s.achievement < 85);
+  if (underShifts.length > 0) {
+    const worst = underShifts.sort((a, b) => a.achievement - b.achievement)[0];
+    factors.push({
+      key: 'shift_under', name: `${worst.shift}产量达成率低`, category: '班组',
+      impact: (85 - worst.achievement) * 0.6,
+      severity: worst.achievement < 75 ? 'high' : 'medium',
+      description: `${worst.shift}仅达成 ${worst.achievement.toFixed(0)}%，产量 ${worst.output.toFixed(1)} 吨/目标 ${worst.target.toFixed(0)} 吨`,
+      suggestion: `组织${worst.shift}专项复盘，检查交班接气、参数调整与设备状况`,
+    });
+  }
+
+  const highShifts = shiftEnergy.filter((s) => s.energyLevel === 'high');
+  if (highShifts.length > 0) {
+    const worstEnergy = highShifts.sort((a, b) => b.energyTotal - a.energyTotal)[0];
+    factors.push({
+      key: 'shift_energy', name: `${worstEnergy.shift}能耗偏高`, category: '班组',
+      impact: ((worstEnergy.energyTotal - energy.total) / energy.total) * 100 * 2,
+      severity: 'medium',
+      description: `${worstEnergy.shift}能耗 ${worstEnergy.energyTotal.toFixed(2)} GJ/t，比日均值高 ${(((worstEnergy.energyTotal - energy.total) / energy.total) * 100).toFixed(1)}%`,
+      suggestion: `对比${highShifts.map((s) => s.shift).join('/')}与低能耗班组的操作曲线，找出关键参数差异`,
+    });
+  }
+
+  // 排序：优先坏消息（高严重度在前），再按影响程度
+  const severityWeight = { high: 1000, medium: 500, low: 100, good: 0 };
+  return factors.sort((a, b) => {
+    const aw = severityWeight[a.severity] + a.impact;
+    const bw = severityWeight[b.severity] + b.impact;
+    return bw - aw;
+  });
+};
+
+export const getFactorSeverityColor = (s: ImpactFactor['severity']): string => {
+  switch (s) {
+    case 'high': return 'text-alarm-danger';
+    case 'medium': return 'text-alarm-warning';
+    case 'low': return 'text-dark-300';
+    case 'good': return 'text-alarm-success';
+  }
+};
+
+export const getFactorSeverityBg = (s: ImpactFactor['severity']): string => {
+  switch (s) {
+    case 'high': return 'bg-alarm-danger/10 border-alarm-danger/30';
+    case 'medium': return 'bg-alarm-warning/10 border-alarm-warning/30';
+    case 'low': return 'bg-dark-700 border-dark-600';
+    case 'good': return 'bg-alarm-success/10 border-alarm-success/30';
+  }
+};
+
+export interface OpportunityDay {
+  type: 'benchmark' | 'improve';
+  date: string;
+  fullDate: string;
+  output: number;
+  total: number;
+  coal: number;
+  power: number;
+  steam: number;
+  water: number;
+  gapOutput: number;
+  gapTotal: number;
+}
+
+export const findOpportunityDays = (
+  energyList: EnergyRecord[],
+  avgOutput: number,
+  avgEnergy: number,
+): { benchmarks: OpportunityDay[]; improvements: OpportunityDay[] } => {
+  const benchmarks: OpportunityDay[] = [];
+  const improvements: OpportunityDay[] = [];
+
+  energyList.forEach((e) => {
+    const gapOutput = ((e.output - avgOutput) / avgOutput) * 100;
+    const gapTotal = ((e.total - avgEnergy) / avgEnergy) * 100;
+    if (gapOutput >= 3 && gapTotal <= -2) {
+      benchmarks.push({
+        type: 'benchmark',
+        date: e.date,
+        fullDate: e.fullDate,
+        output: e.output,
+        total: e.total,
+        coal: e.coal,
+        power: e.power,
+        steam: e.steam,
+        water: e.water,
+        gapOutput,
+        gapTotal,
+      });
+    }
+    if (gapOutput <= -3 && gapTotal >= 3) {
+      improvements.push({
+        type: 'improve',
+        date: e.date,
+        fullDate: e.fullDate,
+        output: e.output,
+        total: e.total,
+        coal: e.coal,
+        power: e.power,
+        steam: e.steam,
+        water: e.water,
+        gapOutput,
+        gapTotal,
+      });
+    }
+  });
+
+  benchmarks.sort((a, b) => (b.gapOutput - a.gapOutput) + (a.gapTotal - b.gapTotal));
+  improvements.sort((a, b) => (a.gapOutput - b.gapOutput) + (b.gapTotal - a.gapTotal));
+  return { benchmarks, improvements };
+};
+
+// ===== 导出日报功能：生成独立 HTML 并下载 =====
+export interface ExportDailyReportData {
+  date: string;
+  output: number;
+  outputTrend: number;
+  hotSpotTemp: number;
+  avgTankLevel: number;
+  maxTankLevel: number;
+  energyTotal: number;
+  energyCoal: number;
+  energyPower: number;
+  energySteam: number;
+  energyWater: number;
+  temps: { name: string; value: number; unit: string; status: string }[];
+  tanks: { name: string; level: number; temperature: number; pressure: number; status: string }[];
+  shifts: { shift: Shift; output: number; target: number; achievement: number; contribution: number; energyTotal: number; energyLevel: string }[];
+  shiftTotalOutput: number;
+  alarms: { equipment: string; message: string; level: string; time: string; acknowledged: boolean }[];
+  evaluation: { summary: string; anomalies: string[]; suggestions: string[]; nextShiftNote: string };
+  efficiencyTag: string;
+}
+
+const shiftShort = (s: string) => (s === '早班' ? '早' : s === '中班' ? '中' : '晚');
+
+export const exportDailyReport = (data: ExportDailyReportData) => {
+  const shiftRows = data.shifts.map((s) => `
+    <tr>
+      <td>${s.shift}</td>
+      <td>${s.output.toFixed(1)} / ${s.target.toFixed(1)} t</td>
+      <td style="color:${s.achievement >= 95 ? '#16a34a' : s.achievement >= 85 ? '#ea580c' : '#dc2626'};font-weight:600">${s.achievement.toFixed(1)}%</td>
+      <td>${s.contribution.toFixed(1)}%</td>
+      <td>${s.energyTotal.toFixed(2)} GJ/t <span style="font-size:11px;color:#888">[${s.energyLevel}]</span></td>
+    </tr>`).join('');
+
+  const tempRows = data.temps.map((t) => `
+    <tr><td>${t.name}</td><td>${t.value}${t.unit}</td><td>${t.status === 'normal' ? '<span style="color:#16a34a">正常</span>' : t.status === 'warning' ? '<span style="color:#ea580c">预警</span>' : '<span style="color:#dc2626">告警</span>'}</td></tr>`).join('');
+
+  const tankRows = data.tanks.map((t) => `
+    <tr><td>${t.name}</td><td>${t.level.toFixed(1)}%</td><td>${t.temperature.toFixed(1)}℃</td><td>${t.pressure.toFixed(2)} MPa</td></tr>`).join('');
+
+  const alarmRows = data.alarms.length === 0
+    ? `<tr><td colspan="4" style="text-align:center;padding:12px;color:#666">无未处理告警</td></tr>`
+    : data.alarms.map((a) => `
+      <tr>
+        <td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${a.level === 'alarm' ? '#dc2626' : '#ea580c'}"></span> ${a.equipment}</td>
+        <td>${a.message}</td>
+        <td>${a.time}</td>
+        <td>${a.acknowledged ? '<span style="color:#888">已确认</span>' : '<span style="color:#dc2626;font-weight:600">未处理</span>'}</td>
+      </tr>`).join('');
+
+  const anomalyList = data.evaluation.anomalies.length === 0
+    ? '<li style="color:#16a34a">无明显异常</li>'
+    : data.evaluation.anomalies.map((a) => `<li>${a}</li>`).join('');
+
+  const suggestionList = data.evaluation.suggestions.map((s) => `<li>${s}</li>`).join('');
+
+  const dateObj = new Date(data.date);
+  const weekday = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'][dateObj.getDay()];
+  const now = new Date().toLocaleString('zh-CN');
+
+  const html = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"><title>合成氨车间生产日报 - ${data.date}</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:"Microsoft YaHei",Arial,sans-serif;color:#1a2733;background:#f8fafc;padding:24px;max-width:960px;margin:0 auto}
+  h1{font-size:22px;color:#0c4a6e;border-bottom:3px solid #0ea5e9;padding-bottom:10px;margin-bottom:6px}
+  .sub{color:#64748b;font-size:13px;margin-bottom:20px}
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+  .kpi{background:linear-gradient(135deg,#f0f9ff,#e0f2fe);border:1px solid #bae6fd;border-radius:10px;padding:14px}
+  .kpi .lab{font-size:12px;color:#64748b}.kpi .val{font-size:22px;font-weight:700;color:#0369a1;margin-top:4px}
+  .kpi .tr{font-size:11px;color:#dc2626;margin-top:2px}.kpi .tr.ok{color:#16a34a}
+  .tag{display:inline-block;padding:3px 10px;border-radius:12px;font-size:12px;background:#fee2e2;color:#dc2626;border:1px solid #fecaca}
+  .tag.g{background:#dcfce7;color:#16a34a;border-color:#bbf7d0}
+  .sec{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:16px;margin-bottom:16px}
+  .sec h2{font-size:15px;color:#0c4a6e;margin-bottom:10px;padding-left:10px;border-left:4px solid #0ea5e9}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #f1f5f9}
+  th{background:#f8fafc;color:#475569;font-weight:600}
+  .evl{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:14px;margin-bottom:10px}
+  .evl.h{background:#fef2f2;border-color:#fecaca}
+  .evl h3{font-size:14px;color:#16a34a;margin-bottom:6px}.evl.h h3{color:#dc2626}
+  .evl ul{padding-left:20px;margin-top:4px;color:#374151;line-height:1.7;font-size:13px}
+  .next{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px;margin-top:10px}
+  .footer{margin-top:24px;font-size:11px;color:#94a3b8;text-align:right;border-top:1px dashed #cbd5e1;padding-top:8px}
+</style>
+</head>
+<body>
+<h1>合成氨车间生产日报</h1>
+<div class="sub">
+  报告日期：<strong>${data.date}</strong> ${weekday} &nbsp;|&nbsp;
+  运行状态：<span class="tag ${data.efficiencyTag === '高产低耗' || data.efficiencyTag === '运行良好' ? 'g' : ''}">${data.efficiencyTag}</span> &nbsp;|&nbsp;
+  生成时间：${now}
+</div>
+
+<div class="grid">
+  <div class="kpi"><div class="lab">当日合成氨产量</div><div class="val">${data.output.toFixed(1)} 吨</div><div class="tr ${data.outputTrend < 0 ? 'ok' : ''}">${data.outputTrend >= 0 ? '↑' : '↓'} ${Math.abs(data.outputTrend).toFixed(1)}% 较前日</div></div>
+  <div class="kpi"><div class="lab">合成塔热点温度</div><div class="val">${data.hotSpotTemp.toFixed(0)} ℃</div><div class="tr" style="color:#64748b">优值区间 480~500℃</div></div>
+  <div class="kpi"><div class="lab">液氨储罐平均液位</div><div class="val">${data.avgTankLevel.toFixed(1)} %</div><div class="tr" style="color:#64748b">最高 ${data.maxTankLevel.toFixed(1)}%</div></div>
+  <div class="kpi"><div class="lab">吨氨综合能耗</div><div class="val">${data.energyTotal.toFixed(2)} GJ/t</div><div class="tr" style="color:#64748b">煤/电/汽/水：${data.energyCoal.toFixed(2)}/${data.energyPower}/${data.energySteam.toFixed(1)}/${data.energyWater.toFixed(0)}</div></div>
+</div>
+
+<div class="sec"><h2>班组产量与能耗表现（合计 ${data.shiftTotalOutput.toFixed(1)} 吨）</h2>
+<table><thead><tr><th>班组</th><th>产量/目标</th><th>目标达成</th><th>贡献占比</th><th>吨氨能耗</th></tr></thead><tbody>${shiftRows}</tbody></table></div>
+
+<div class="sec"><h2>合成塔温度监控</h2>
+<table><thead><tr><th>测点</th><th>当前值</th><th>状态</th></tr></thead><tbody>${tempRows}</tbody></table></div>
+
+<div class="sec"><h2>液氨储罐液位</h2>
+<table><thead><tr><th>储罐</th><th>液位</th><th>温度</th><th>压力</th></tr></thead><tbody>${tankRows}</tbody></table></div>
+
+<div class="sec"><h2>能耗分项</h2>
+<table><thead><tr><th>项目</th><th>原料煤</th><th>电力</th><th>蒸汽</th><th>循环水</th><th>综合能耗</th></tr></thead><tbody>
+  <tr><td>数值</td><td>${data.energyCoal.toFixed(3)} t/t</td><td>${data.energyPower.toFixed(0)} kWh/t</td><td>${data.energySteam.toFixed(2)} t/t</td><td>${data.energyWater.toFixed(1)} m³/t</td><td><strong>${data.energyTotal.toFixed(2)} GJ/t</strong></td></tr>
+</tbody></table></div>
+
+<div class="sec"><h2>告警记录（${data.alarms.length} 条）</h2>
+<table><thead><tr><th>设备</th><th>告警内容</th><th>发生时间</th><th>状态</th></tr></thead><tbody>${alarmRows}</tbody></table></div>
+
+<div class="sec"><h2>自动运行评价</h2>
+<div class="evl ${data.evaluation.anomalies.length > 0 ? 'h' : ''}">
+  <h3>总体结论</h3><div style="line-height:1.7;color:#374151;font-size:13px">${data.evaluation.summary}</div>
+</div>
+<div class="evl"><h3>主要异常</h3><ul>${anomalyList}</ul></div>
+<div class="evl"><h3>优化建议</h3><ul>${suggestionList}</ul></div>
+<div class="next">
+  <strong style="color:#b45309">⚠ 下一班注意事项：</strong>
+  <span style="color:#78350f;margin-left:6px">${data.evaluation.nextShiftNote}</span>
+</div>
+</div>
+
+<div class="footer">
+  本报告由合成氨车间班组运行档案系统自动生成，数据更新时间：${now}
+</div>
+</body></html>`;
+
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `合成氨车间生产日报_${data.date}.html`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};

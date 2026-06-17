@@ -20,6 +20,8 @@ import {
   ClipboardCheck,
   Calendar,
   List,
+  Download,
+  Layers,
 } from 'lucide-react';
 import Layout from '@/components/layout/Layout';
 import MetricCard from '@/components/ui/MetricCard';
@@ -43,6 +45,10 @@ import {
   generateDailyEvaluation,
   getEnergyLevelColor,
   getEnergyLevelLabel,
+  analyzeImpactFactors,
+  getFactorSeverityColor,
+  getFactorSeverityBg,
+  exportDailyReport,
 } from '@/utils/helpers';
 import type { MonitorParam, TankLevel as TankLevelType, AlarmRecord } from '@/types';
 
@@ -144,7 +150,11 @@ export default function Dashboard() {
 
   // 实时数据（用于仪表盘本身）
   const todayShiftData = useMemo(() => getDateShiftEnergy(productionData, energyData, getTodayLocalStr()), [productionData, energyData]);
+  const yesterdayShiftData = useMemo(() => getDateShiftEnergy(productionData, energyData, getDateDaysAgo(1)), [productionData, energyData]);
   const todayTotalOutput = todayShiftData.totalOutput;
+  const todayVsYesterdayOutput = yesterdayShiftData.totalOutput > 0
+    ? (((todayTotalOutput - yesterdayShiftData.totalOutput) / yesterdayShiftData.totalOutput) * 100)
+    : 0;
   const todayEnergy = getEnergyForDate(energyData, getTodayLocalStr());
 
   // 报表日期对应的数据
@@ -160,10 +170,17 @@ export default function Dashboard() {
     () => reportDate === getTodayLocalStr() ? liveAlarms.filter((a) => !a.acknowledged) : getHistoricalAlarms(reportDate, liveAlarms, reportHotSpot?.value || 495),
     [reportDate, liveAlarms, reportHotSpot]
   );
-  const reportPrevEnergy = energyData[energyData.findIndex((e) => e.fullDate === reportDate) + 1];
-  const reportPrevShiftData = reportPrevEnergy
-    ? getDateShiftEnergy(productionData, energyData, reportPrevEnergy.fullDate)
-    : { totalOutput: 0, shifts: [] };
+  // 使用 getDateDaysAgo 获取真实前一天，不再依赖 energyData 数组位置
+  const prevDate = (() => {
+    const d = new Date(reportDate); d.setDate(d.getDate() - 1);
+    const y = d.getFullYear(); const m = String(d.getMonth() + 1).padStart(2, '0'); const dd = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${dd}`;
+  })();
+  const reportPrevShiftData = useMemo(
+    () => getDateShiftEnergy(productionData, energyData, prevDate),
+    [productionData, energyData, prevDate]
+  );
+  const reportPrevEnergy = getEnergyForDate(energyData, prevDate);
   const reportOutputTrend = reportPrevShiftData.totalOutput > 0
     ? (((reportShiftData.totalOutput - reportPrevShiftData.totalOutput) / reportPrevShiftData.totalOutput) * 100)
     : 0;
@@ -181,9 +198,50 @@ export default function Dashboard() {
     reportAlarms.filter((a) => !a.acknowledged).length,
     reportProdRaw,
   );
+  // 异常追溯分析
+  const reportImpactFactors = useMemo(() => {
+    if (!reportEnergy) return [];
+    return analyzeImpactFactors({
+      hotSpotTemp: reportHotSpot?.value || 495,
+      alarmCount: reportAlarms.filter((a) => !a.acknowledged).length,
+      energy: reportEnergy,
+      avgOutput: avgOutputAll,
+      avgEnergy: avgEnergyAll,
+      shiftEnergy: reportShiftData.shifts,
+    });
+  }, [reportEnergy, reportHotSpot, reportAlarms, avgOutputAll, avgEnergyAll, reportShiftData]);
 
   const reportMaxTank = Math.max(...reportTanks.map((t) => t.level));
   const reportAvgTank = reportTanks.reduce((s, t) => s + t.level, 0) / reportTanks.length;
+
+  // 真实处理导出
+  const handleExportReport = () => {
+    if (!reportEnergy) return;
+    exportDailyReport({
+      date: reportDate,
+      output: reportShiftData.totalOutput,
+      outputTrend: reportOutputTrend,
+      hotSpotTemp: reportHotSpot?.value || 495,
+      avgTankLevel: reportAvgTank,
+      maxTankLevel: reportMaxTank,
+      energyTotal: reportEnergy.total,
+      energyCoal: reportEnergy.coal,
+      energyPower: reportEnergy.power,
+      energySteam: reportEnergy.steam,
+      energyWater: reportEnergy.water,
+      temps: reportTemps.map((t) => ({ name: t.name, value: t.value, unit: t.unit, status: t.status })),
+      tanks: reportTanks.map((t) => ({ name: t.name, level: t.level, temperature: t.temperature, pressure: t.pressure, status: t.status })),
+      shifts: reportShiftData.shifts.map((s) => ({
+        shift: s.shift, output: s.output, target: s.target,
+        achievement: s.achievement, contribution: s.contribution,
+        energyTotal: s.energyTotal, energyLevel: getEnergyLevelLabel(s.energyLevel),
+      })),
+      shiftTotalOutput: reportShiftData.totalOutput,
+      alarms: reportAlarms.map((a) => ({ equipment: a.equipment, message: a.message, level: a.level, time: a.time, acknowledged: a.acknowledged })),
+      evaluation: reportEvaluation,
+      efficiencyTag: getEfficiencyLabel(reportTag),
+    });
+  };
 
   const minReportDate = getDateDaysAgo(13);
   const navigateReportDate = (delta: number) => {
@@ -234,7 +292,7 @@ export default function Dashboard() {
             unit="吨"
             decimals={1}
             icon={<Factory size={20} />}
-            trend={0}
+            trend={todayVsYesterdayOutput}
             trendLabel="较昨日"
             color="text-primary-400"
           />
@@ -445,7 +503,9 @@ export default function Dashboard() {
                     <button onClick={() => setReportView('list')} className="px-3 py-1.5 rounded-lg bg-dark-700 hover:bg-dark-600 text-dark-200 text-xs transition-colors">
                       返回列表
                     </button>
-                    <button className="px-3 py-1.5 rounded-lg btn-primary text-xs font-medium">导出 PDF</button>
+                    <button onClick={handleExportReport} className="px-3 py-1.5 rounded-lg btn-primary text-xs font-medium flex items-center gap-1">
+                      <Download size={12} /> 导出日报（含评价）
+                    </button>
                   </div>
                 </div>
 
@@ -581,6 +641,37 @@ export default function Dashboard() {
                   </div>
                 </div>
 
+                <div className="p-4 rounded-lg bg-industrial-100/5 border border-industrial-500/20">
+                  <h4 className="text-sm font-medium text-white mb-3 flex items-center gap-2"><Layers size={14} className="text-industrial-100" /> 异常追溯 · 影响程度排序</h4>
+                  {reportImpactFactors.length === 0 ? (
+                    <div className="text-sm text-dark-300 py-4 text-center">当日运行平稳，未检测到明显异常因素 ✅</div>
+                  ) : (
+                    <div className="space-y-2">
+                      {reportImpactFactors.map((f, i) => (
+                        <div key={f.key} className={`p-3 rounded-lg border ${getFactorSeverityBg(f.severity)}`}>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-dark-800/60 text-dark-300">#{i + 1}</span>
+                                <span className={`text-xs px-2 py-0.5 rounded border border-current/30 ${getFactorSeverityColor(f.severity)}`}>{f.category}</span>
+                                <span className={`text-sm font-semibold ${getFactorSeverityColor(f.severity)}`}>{f.name}</span>
+                              </div>
+                              <div className="text-xs text-dark-300">{f.description}</div>
+                              <div className="text-[11px] mt-1 text-primary-400">💡 {f.suggestion}</div>
+                            </div>
+                            <div className="text-right flex-shrink-0">
+                              <div className="text-[10px] text-dark-500">影响度</div>
+                              <div className={`text-lg font-display font-bold ${getFactorSeverityColor(f.severity)}`}>
+                                {f.impact.toFixed(0)}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
                 <div className="p-4 rounded-lg bg-primary-500/5 border border-primary-500/20">
                   <h4 className="text-sm font-medium text-white mb-3 flex items-center gap-2"><ClipboardCheck size={14} className="text-primary-400" /> 自动运行评价</h4>
                   <p className="text-sm text-dark-300 leading-relaxed mb-3">{reportEvaluation.summary}</p>
@@ -606,7 +697,9 @@ export default function Dashboard() {
 
                 <div className="flex justify-end gap-3 pt-2">
                   <button onClick={() => setShowDailyReport(false)} className="px-4 py-2 rounded-lg bg-dark-700 hover:bg-dark-600 text-dark-200 text-sm transition-colors">关闭</button>
-                  <button className="px-4 py-2 rounded-lg btn-primary text-sm font-medium">导出 PDF（含评价）</button>
+                  <button onClick={handleExportReport} className="px-4 py-2 rounded-lg btn-primary text-sm font-medium flex items-center gap-1.5">
+                    <Download size={14} /> 导出日报（含评价）
+                  </button>
                 </div>
               </div>
             )}
