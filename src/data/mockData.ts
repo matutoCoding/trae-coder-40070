@@ -7,6 +7,7 @@ import type {
   TankLevel,
   ValveStatus,
   TimeSeriesPoint,
+  Shift,
 } from '@/types';
 
 const getStatus = (value: number, min: number, max: number): 'normal' | 'warning' | 'alarm' => {
@@ -148,36 +149,68 @@ export const valves: ValveStatus[] = [
   { id: 'v-4', name: '储罐出口阀', openPercent: 52, status: 'manual' },
 ];
 
+const getLocalDateStr = (date: Date): string => {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
+const getShortDateStr = (date: Date): string => {
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${m}/${d}`;
+};
+
+export const getTodayStr = (): string => {
+  return getLocalDateStr(new Date());
+};
+
 export const generateProductionData = (): ProductionRecord[] => {
   const records: ProductionRecord[] = [];
-  const shifts: ('早班' | '中班' | '晚班')[] = ['早班', '中班', '晚班'];
-  for (let i = 13; i >= 0; i--) {
-    const date = new Date();
-    date.setDate(date.getDate() - Math.floor(i / 3));
-    const shift = shifts[i % 3];
-    const output = Number((45 + Math.random() * 15).toFixed(1));
-    records.push({
-      date: date.toISOString().slice(5, 10).replace('-', '/'),
-      shift,
-      output,
-      target: 55,
-    });
+  const shifts: Shift[] = ['早班', '中班', '晚班'];
+  const today = new Date();
+  for (let daysAgo = 0; daysAgo < 14; daysAgo++) {
+    const date = new Date(today);
+    date.setDate(date.getDate() - daysAgo);
+    const fullDate = getLocalDateStr(date);
+    const shortDate = getShortDateStr(date);
+    for (let s = 2; s >= 0; s--) {
+      const shift = shifts[s];
+      const baseOutput = daysAgo === 0 ? 52 : 50;
+      const output = Number((baseOutput + Math.random() * 10).toFixed(1));
+      records.push({
+        date: shortDate,
+        fullDate,
+        shift,
+        output,
+        target: 55,
+      });
+    }
   }
   return records;
 };
 
 export const generateEnergyData = (): EnergyRecord[] => {
   const records: EnergyRecord[] = [];
-  for (let i = 6; i >= 0; i--) {
-    const date = new Date();
-    date.setDate(date.getDate() - i);
-    const coal = Number((1.15 + Math.random() * 0.1).toFixed(3));
-    const power = Number((1250 + Math.random() * 150).toFixed(0));
-    const steam = Number((2.8 + Math.random() * 0.4).toFixed(2));
-    const water = Number((18 + Math.random() * 4).toFixed(1));
-    const total = Number((38 + Math.random() * 4).toFixed(2));
+  const today = new Date();
+  for (let daysAgo = 6; daysAgo >= 0; daysAgo--) {
+    const date = new Date(today);
+    date.setDate(date.getDate() - daysAgo);
+    const fullDate = getLocalDateStr(date);
+    const shortDate = getShortDateStr(date);
+    const baseOutput = daysAgo === 0 ? 156 : 150;
+    const output = Number((baseOutput + Math.random() * 8).toFixed(1));
+    const outputFactor = output / 150;
+    const coal = Number((1.15 + (1 - outputFactor) * 0.08 + Math.random() * 0.05).toFixed(3));
+    const power = Number((1250 + (1 - outputFactor) * 80 + Math.random() * 80).toFixed(0));
+    const steam = Number((2.8 + (1 - outputFactor) * 0.2 + Math.random() * 0.2).toFixed(2));
+    const water = Number((18 + (1 - outputFactor) * 2 + Math.random() * 2).toFixed(1));
+    const total = Number((38 + (1 - outputFactor) * 3 + Math.random() * 1.5).toFixed(2));
     records.push({
-      date: date.toISOString().slice(5, 10).replace('-', '/'),
+      date: shortDate,
+      fullDate,
+      output,
       coal,
       power,
       steam,

@@ -1,10 +1,45 @@
 import type { TankLevel as TankLevelType } from '@/types';
 import { formatNumber, getStatusColor } from '@/utils/helpers';
 
-export default function TankLevel({ tank }: { tank: TankLevelType }) {
+interface TankLevelProps {
+  tank: TankLevelType;
+  showDetails?: boolean;
+}
+
+export default function TankLevel({ tank, showDetails = true }: TankLevelProps) {
   const levelPercent = (tank.level / 100) * 100;
   const lowLine = (tank.minLevel / 100) * 100;
   const highLine = (tank.maxLevel / 100) * 100;
+
+  if (!showDetails) {
+    return (
+      <div className="relative w-12 h-24 rounded-md border-2 border-dark-500 bg-dark-900 overflow-hidden">
+        <div
+          className={`absolute bottom-0 left-0 right-0 transition-all duration-700 ${
+            tank.status === 'normal'
+              ? 'bg-gradient-to-t from-primary-700 to-primary-500'
+              : tank.status === 'warning'
+              ? 'bg-gradient-to-t from-alarm-warning/80 to-alarm-warning'
+              : 'bg-gradient-to-t from-alarm-danger/80 to-alarm-danger'
+          }`}
+          style={{ height: `${levelPercent}%` }}
+        >
+          <div className="absolute top-0 left-0 right-0 h-0.5 bg-white/30" />
+        </div>
+        <div
+          className="absolute left-0 right-0 border-t border-dashed border-alarm-danger/60"
+          style={{ bottom: `${highLine}%` }}
+        />
+        <div
+          className="absolute left-0 right-0 border-t border-dashed border-alarm-warning/60"
+          style={{ bottom: `${lowLine}%` }}
+        />
+        <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[10px] font-mono text-white font-bold">
+          {formatNumber(tank.level, 0)}%
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="px-4 py-3 rounded bg-dark-800 border border-dark-600">

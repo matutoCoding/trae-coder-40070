@@ -25,6 +25,7 @@ export interface GasComposition {
 
 export interface ProductionRecord {
   date: string;
+  fullDate: string;
   shift: Shift;
   output: number;
   target: number;
@@ -32,6 +33,8 @@ export interface ProductionRecord {
 
 export interface EnergyRecord {
   date: string;
+  fullDate: string;
+  output: number;
   coal: number;
   power: number;
   steam: number;

@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Flame,
   Wind,
@@ -13,6 +13,8 @@ import {
   Thermometer,
   AlertTriangle,
   CheckCircle,
+  FileText,
+  X,
 } from 'lucide-react';
 import Layout from '@/components/layout/Layout';
 import MetricCard from '@/components/ui/MetricCard';
@@ -20,11 +22,14 @@ import Card from '@/components/ui/Card';
 import ModuleCard from '@/components/ui/ModuleCard';
 import LineChart from '@/components/charts/LineChart';
 import PieChart from '@/components/charts/PieChart';
+import TankLevelComp from '@/components/ui/TankLevel';
 import { useAppStore } from '@/store/appStore';
 import { generateTimeSeries } from '@/data/mockData';
-import { formatNumber } from '@/utils/helpers';
+import { formatNumber, getTodayTotalOutput, getYesterdayTotalOutput, getTodayLocalStr } from '@/utils/helpers';
 
 export default function Dashboard() {
+  const [showDailyReport, setShowDailyReport] = useState(false);
+
   const {
     synthesisPressureParams,
     synthesisTempParams,
@@ -33,14 +38,23 @@ export default function Dashboard() {
     productionData,
     alarms,
     halfWaterGas,
+    tankLevels,
     acknowledgeAlarm,
   } = useAppStore();
 
   const hotSpotTemp = synthesisTempParams.find((p) => p.id === 'sy-t5');
   const synthPressure = synthesisPressureParams.find((p) => p.id === 'sy-p1');
   const nh3Flow = separationParams.find((p) => p.id === 'sp-3');
-  const todayOutput = productionData.slice(0, 3).reduce((sum, p) => sum + p.output, 0);
-  const avgEnergy = energyData.length > 0 ? energyData[energyData.length - 1].total : 0;
+  const todayOutput = getTodayTotalOutput(productionData);
+  const yesterdayOutput = getYesterdayTotalOutput(productionData);
+  const outputTrendValue = yesterdayOutput > 0
+    ? (((todayOutput - yesterdayOutput) / yesterdayOutput) * 100)
+    : 0;
+  const avgEnergy = energyData.length > 0 ? energyData[0].total : 0;
+  const todayEnergy = energyData.find((e) => e.fullDate === getTodayLocalStr());
+
+  const unackedAlarms = alarms.filter((a) => !a.acknowledged);
+  const todayStr = getTodayLocalStr().slice(5).replace('-', '/');
 
   const outputTrend = useMemo(() => generateTimeSeries(30, 16.5, 2), []);
   const tempTrend = useMemo(() => generateTimeSeries(30, 490, 15), []);
@@ -54,19 +68,20 @@ export default function Dashboard() {
     { name: '其他', value: (halfWaterGas.ch4 || 0) + (halfWaterGas.ar || 0) },
   ];
 
-  const unackedAlarms = alarms.filter((a) => !a.acknowledged);
+  const maxTankLevel = Math.max(...tankLevels.map((t) => t.level));
+  const avgTankLevel = tankLevels.reduce((s, t) => s + t.level, 0) / tankLevels.length;
 
   return (
     <Layout title="总控仪表盘">
       <div className="space-y-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
           <MetricCard
             label="今日合成氨产量"
             value={todayOutput}
             unit="吨"
             decimals={1}
             icon={<Factory size={20} />}
-            trend={3.2}
+            trend={Number(outputTrendValue.toFixed(1))}
             trendLabel="较昨日"
             color="text-primary-400"
           />
@@ -96,6 +111,25 @@ export default function Dashboard() {
             trendLabel="较上周"
             color="text-alarm-success"
           />
+          <div
+            className="col-span-2 md:col-span-1 card-base rounded-lg p-4 cursor-pointer hover:border-primary-500/50 transition-all group"
+            onClick={() => setShowDailyReport(true)}
+          >
+            <div className="flex items-center justify-between h-full">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary-600 to-primary-800 flex items-center justify-center text-white shadow-lg shadow-primary-500/20">
+                  <FileText size={20} />
+                </div>
+                <div>
+                  <div className="text-xs text-dark-400">车间日报</div>
+                  <div className="font-display font-bold text-white">{todayStr}</div>
+                </div>
+              </div>
+              <div className="text-dark-400 group-hover:text-primary-400 transition-colors">
+                <X size={18} className="rotate-45" />
+              </div>
+            </div>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -234,6 +268,181 @@ export default function Dashboard() {
           </Card>
         </div>
       </div>
+
+      {showDailyReport && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="card-base rounded-xl w-full max-w-4xl max-h-[90vh] overflow-auto">
+            <div className="sticky top-0 bg-dark-800/95 backdrop-blur px-6 py-4 border-b border-dark-600 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary-600 to-primary-800 flex items-center justify-center text-white shadow-lg shadow-primary-500/20">
+                  <FileText size={20} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-display font-bold text-white">合成氨车间生产日报</h3>
+                  <p className="text-xs text-dark-400">
+                    {getTodayLocalStr()} · {new Date().toLocaleDateString('zh-CN', { weekday: 'long' })}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowDailyReport(false)}
+                className="w-8 h-8 rounded-lg bg-dark-700 hover:bg-dark-600 flex items-center justify-center text-dark-300 hover:text-white transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-6">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="p-4 rounded-lg bg-dark-700/50 border border-dark-600">
+                  <div className="text-xs text-dark-400 mb-1">今日合成氨产量</div>
+                  <div className="text-2xl font-display font-bold text-primary-400">
+                    {formatNumber(todayOutput, 1)} <span className="text-sm font-normal text-dark-400">吨</span>
+                  </div>
+                  <div className={`text-xs mt-1 ${outputTrendValue >= 0 ? 'text-alarm-danger' : 'text-alarm-success'}`}>
+                    {outputTrendValue >= 0 ? '↑' : '↓'} {Math.abs(outputTrendValue).toFixed(1)}% 较昨日
+                  </div>
+                </div>
+                <div className="p-4 rounded-lg bg-dark-700/50 border border-dark-600">
+                  <div className="text-xs text-dark-400 mb-1">合成塔热点温度</div>
+                  <div className="text-2xl font-display font-bold text-alarm-warning">
+                    {hotSpotTemp?.value?.toFixed(0)} <span className="text-sm font-normal text-dark-400">℃</span>
+                  </div>
+                  <div className="text-xs mt-1 text-dark-400">
+                    正常范围: 470 ~ 520 ℃
+                  </div>
+                </div>
+                <div className="p-4 rounded-lg bg-dark-700/50 border border-dark-600">
+                  <div className="text-xs text-dark-400 mb-1">液氨储罐平均液位</div>
+                  <div className="text-2xl font-display font-bold text-industrial-100">
+                    {avgTankLevel.toFixed(1)} <span className="text-sm font-normal text-dark-400">%</span>
+                  </div>
+                  <div className="text-xs mt-1 text-dark-400">
+                    最高: {maxTankLevel.toFixed(1)}%
+                  </div>
+                </div>
+                <div className="p-4 rounded-lg bg-dark-700/50 border border-dark-600">
+                  <div className="text-xs text-dark-400 mb-1">吨氨综合能耗</div>
+                  <div className="text-2xl font-display font-bold text-alarm-success">
+                    {todayEnergy?.total.toFixed(2)} <span className="text-sm font-normal text-dark-400">GJ/t</span>
+                  </div>
+                  <div className="text-xs mt-1 text-alarm-success">
+                    ↓ 1.8% 较上周
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div className="p-4 rounded-lg bg-dark-700/30 border border-dark-600">
+                  <h4 className="text-sm font-medium text-white mb-3 flex items-center gap-2">
+                    <Thermometer size={14} className="text-alarm-warning" />
+                    合成塔温度监控
+                  </h4>
+                  <div className="space-y-2">
+                    {synthesisTempParams.map((p) => (
+                      <div key={p.id} className="flex items-center justify-between">
+                        <span className="text-sm text-dark-300">{p.name}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-white">{p.value}{p.unit}</span>
+                          <span className={`text-xs px-1.5 py-0.5 rounded ${
+                            p.status === 'normal' ? 'bg-alarm-success/20 text-alarm-success' :
+                            p.status === 'warning' ? 'bg-alarm-warning/20 text-alarm-warning' :
+                            'bg-alarm-danger/20 text-alarm-danger'
+                          }`}>
+                            {p.status === 'normal' ? '正常' : p.status === 'warning' ? '预警' : '告警'}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-lg bg-dark-700/30 border border-dark-600">
+                  <h4 className="text-sm font-medium text-white mb-3 flex items-center gap-2">
+                    <Droplets size={14} className="text-industrial-100" />
+                    液氨储罐液位
+                  </h4>
+                  <div className="grid grid-cols-3 gap-3">
+                    {tankLevels.map((t) => (
+                      <div key={t.id} className="flex flex-col items-center">
+                        <TankLevelComp tank={t} showDetails={false} />
+                        <div className="text-xs text-dark-400 mt-2">{t.name.replace('液氨', '')}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div className="p-4 rounded-lg bg-dark-700/30 border border-dark-600">
+                  <h4 className="text-sm font-medium text-white mb-3 flex items-center gap-2">
+                    <Zap size={14} className="text-primary-400" />
+                    今日能耗分项
+                  </h4>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-dark-300">原料煤</span>
+                      <span className="font-mono text-alarm-warning">{todayEnergy?.coal.toFixed(3)} t/t</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-dark-300">电力</span>
+                      <span className="font-mono text-primary-400">{todayEnergy?.power.toFixed(0)} kWh/t</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-dark-300">蒸汽</span>
+                      <span className="font-mono text-alarm-danger">{todayEnergy?.steam.toFixed(2)} t/t</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-dark-300">循环水</span>
+                      <span className="font-mono text-industrial-100">{todayEnergy?.water.toFixed(1)} m³/t</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-lg bg-dark-700/30 border border-dark-600">
+                  <h4 className="text-sm font-medium text-white mb-3 flex items-center gap-2">
+                    <AlertTriangle size={14} className="text-alarm-warning" />
+                    主要告警
+                  </h4>
+                  <div className="space-y-2 max-h-[160px] overflow-y-auto">
+                    {unackedAlarms.length === 0 ? (
+                      <div className="text-center py-4 text-dark-400 text-sm">
+                        <CheckCircle size={20} className="mx-auto mb-1 text-alarm-success" />
+                        无未处理告警
+                      </div>
+                    ) : (
+                      unackedAlarms.map((a) => (
+                        <div key={a.id} className="flex items-start gap-2 p-2 rounded bg-dark-800/50">
+                          <span className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${
+                            a.level === 'alarm' ? 'bg-alarm-danger animate-pulse' : 'bg-alarm-warning'
+                          }`} />
+                          <div className="min-w-0">
+                            <div className="text-sm font-medium text-white">{a.equipment}</div>
+                            <div className="text-xs text-dark-300 truncate">{a.message}</div>
+                            <div className="text-[10px] text-dark-500 font-mono">{a.time}</div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  onClick={() => setShowDailyReport(false)}
+                  className="px-4 py-2 rounded-lg bg-dark-700 hover:bg-dark-600 text-dark-200 text-sm transition-colors"
+                >
+                  关闭
+                </button>
+                <button className="px-4 py-2 rounded-lg btn-primary text-sm font-medium">
+                  导出 PDF
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </Layout>
   );
 }
