@@ -1,0 +1,99 @@
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Rajdhani:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: 'Inter', 'Noto Sans SC', system-ui, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color-scheme: dark;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background-color: #0f1923;
+  color: #e8eaed;
+}
+
+#root {
+  width: 100%;
+  height: 100vh;
+  overflow: hidden;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #1a2733;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #334e68;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #486581;
+}
+
+@layer components {
+  .card-base {
+    @apply bg-dark-700 rounded-lg border border-dark-600 shadow-card;
+  }
+
+  .card-hover {
+    @apply transition-all duration-300 hover:border-primary-500/30 hover:shadow-glow;
+  }
+
+  .btn-primary {
+    @apply px-4 py-2 bg-primary-600 text-white rounded hover:bg-primary-500 transition-colors duration-200 font-medium;
+  }
+
+  .btn-secondary {
+    @apply px-4 py-2 bg-dark-600 text-white rounded hover:bg-dark-500 transition-colors duration-200 border border-dark-500;
+  }
+
+  .data-value {
+    @apply font-mono font-semibold;
+  }
+
+  .param-label {
+    @apply text-sm text-dark-300;
+  }
+
+  .status-normal {
+    @apply text-alarm-success;
+  }
+
+  .status-warning {
+    @apply text-alarm-warning;
+  }
+
+  .status-alarm {
+    @apply text-alarm-danger;
+  }
+
+  .glow-border {
+    @apply border border-primary-500/30 shadow-glow;
+  }
+
+  .section-title {
+    @apply text-lg font-display font-semibold text-white mb-4 flex items-center gap-2;
+  }
+}
